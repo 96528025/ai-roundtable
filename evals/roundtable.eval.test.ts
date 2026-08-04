@@ -4,8 +4,13 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { processEnv } from "@next/env";
 import { afterAll, describe, expect, it } from "vitest";
+import { runSinglePass } from "@/lib/control";
 import { runRoundtable } from "@/lib/debate";
-import { evaluateRoundtable, type EvaluationReport } from "@/lib/evaluation";
+import {
+  evaluateDecisionBrief,
+  evaluateRoundtable,
+  type EvaluationReport
+} from "@/lib/evaluation";
 import type { RunDiagnostics } from "@/types";
 import { evaluationCases } from "./cases";
 
@@ -31,8 +36,21 @@ const caseLimit = Number.isFinite(requestedLimit)
 type BaselineOutcome = {
   caseName: string;
   panelMode: string;
-  report: EvaluationReport;
-  diagnostics?: RunDiagnostics;
+  multiAgent: {
+    workflowReport: EvaluationReport;
+    briefReport: EvaluationReport;
+    diagnostics?: RunDiagnostics;
+  };
+  singlePass: {
+    briefReport: EvaluationReport;
+    diagnostics: RunDiagnostics;
+  };
+  comparison: {
+    briefScoreDelta: number;
+    modelCallAttemptRatio: number | null;
+    totalTokenRatio: number | null;
+    durationRatio: number | null;
+  };
 };
 
 const outcomes: BaselineOutcome[] = [];
@@ -50,36 +68,94 @@ function gitMetadata(): { commit: string; dirty: boolean } {
   }
 }
 
-describe.skipIf(!runLiveEvaluations)("live roundtable quality evaluation", () => {
+function totalTokens(diagnostics: RunDiagnostics | undefined): number {
+  return (diagnostics?.inputTokens ?? 0) + (diagnostics?.outputTokens ?? 0);
+}
+
+function ratio(numerator: number, denominator: number): number | null {
+  return denominator > 0 ? Number((numerator / denominator).toFixed(2)) : null;
+}
+
+function average(values: number[]): number {
+  if (values.length === 0) return 0;
+  return Number(
+    (values.reduce((total, value) => total + value, 0) / values.length).toFixed(1)
+  );
+}
+
+describe.skipIf(!runLiveEvaluations)("paired roundtable quality evaluation", () => {
   afterAll(async () => {
     if (outcomes.length === 0) return;
 
-    const scores = outcomes.map((outcome) => outcome.report.score);
+    const allDiagnostics = outcomes.flatMap((outcome) => [
+      outcome.multiAgent.diagnostics,
+      outcome.singlePass.diagnostics
+    ]);
     const models = [
-      ...new Set(outcomes.flatMap((outcome) => outcome.diagnostics?.models ?? []))
+      ...new Set(allDiagnostics.flatMap((diagnostics) => diagnostics?.models ?? []))
     ];
     const baseline = {
       generatedAt: new Date().toISOString(),
-      evaluatorVersion: 1,
+      evaluatorVersion: 2,
+      experiment: "multi-agent roundtable vs single-pass control",
       git: gitMetadata(),
       models,
       caseCount: outcomes.length,
-      passedCases: outcomes.filter((outcome) => outcome.report.passed).length,
-      averageScore: Number(
-        (scores.reduce((total, score) => total + score, 0) / scores.length).toFixed(1)
-      ),
-      totalDurationMs: outcomes.reduce(
-        (total, outcome) => total + (outcome.diagnostics?.durationMs ?? 0),
-        0
-      ),
-      totalInputTokens: outcomes.reduce(
-        (total, outcome) => total + (outcome.diagnostics?.inputTokens ?? 0),
-        0
-      ),
-      totalOutputTokens: outcomes.reduce(
-        (total, outcome) => total + (outcome.diagnostics?.outputTokens ?? 0),
-        0
-      ),
+      multiAgent: {
+        passedWorkflowCases: outcomes.filter(
+          (outcome) => outcome.multiAgent.workflowReport.passed
+        ).length,
+        averageWorkflowScore: average(
+          outcomes.map((outcome) => outcome.multiAgent.workflowReport.score)
+        ),
+        averageBriefScore: average(
+          outcomes.map((outcome) => outcome.multiAgent.briefReport.score)
+        ),
+        totalDurationMs: outcomes.reduce(
+          (total, outcome) => total + (outcome.multiAgent.diagnostics?.durationMs ?? 0),
+          0
+        ),
+        totalTokens: outcomes.reduce(
+          (total, outcome) => total + totalTokens(outcome.multiAgent.diagnostics),
+          0
+        )
+      },
+      singlePass: {
+        passedBriefCases: outcomes.filter(
+          (outcome) => outcome.singlePass.briefReport.passed
+        ).length,
+        averageBriefScore: average(
+          outcomes.map((outcome) => outcome.singlePass.briefReport.score)
+        ),
+        totalDurationMs: outcomes.reduce(
+          (total, outcome) => total + outcome.singlePass.diagnostics.durationMs,
+          0
+        ),
+        totalTokens: outcomes.reduce(
+          (total, outcome) => total + totalTokens(outcome.singlePass.diagnostics),
+          0
+        )
+      },
+      comparison: {
+        averageBriefScoreDelta: average(
+          outcomes.map((outcome) => outcome.comparison.briefScoreDelta)
+        ),
+        averageModelCallAttemptRatio: average(
+          outcomes
+            .map((outcome) => outcome.comparison.modelCallAttemptRatio)
+            .filter((value): value is number => value !== null)
+        ),
+        averageTotalTokenRatio: average(
+          outcomes
+            .map((outcome) => outcome.comparison.totalTokenRatio)
+            .filter((value): value is number => value !== null)
+        ),
+        averageDurationRatio: average(
+          outcomes
+            .map((outcome) => outcome.comparison.durationRatio)
+            .filter((value): value is number => value !== null)
+        )
+      },
       outcomes
     };
     const outputPath = path.resolve(
@@ -88,23 +164,58 @@ describe.skipIf(!runLiveEvaluations)("live roundtable quality evaluation", () =>
 
     await mkdir(path.dirname(outputPath), { recursive: true });
     await writeFile(outputPath, `${JSON.stringify(baseline, null, 2)}\n`, "utf8");
-    console.info(`Evaluation baseline written to ${outputPath}`);
+    console.info(`Paired evaluation baseline written to ${outputPath}`);
   });
 
   it.each(evaluationCases.slice(0, caseLimit))(
-    "$name meets the quality threshold",
+    "$name compares multi-agent and single-pass output",
     async ({ name, idea, panelMode, topics }) => {
-      const result = await runRoundtable(idea, topics, panelMode);
-      const report = evaluateRoundtable(result);
+      // Run the one-call control first so configuration failures do not waste a 16-call workflow.
+      const singlePassResult = await runSinglePass(idea, topics, panelMode);
+      const singlePassBriefReport = evaluateDecisionBrief(singlePassResult.summary);
+      const multiAgentResult = await runRoundtable(idea, topics, panelMode);
+      const multiAgentWorkflowReport = evaluateRoundtable(multiAgentResult);
+      const multiAgentBriefReport = evaluateDecisionBrief(multiAgentResult.summary);
+      const multiAgentDiagnostics = multiAgentResult.diagnostics;
+      const models = new Set([
+        ...singlePassResult.diagnostics.models,
+        ...(multiAgentDiagnostics?.models ?? [])
+      ]);
 
       outcomes.push({
         caseName: name,
         panelMode,
-        report,
-        diagnostics: result.diagnostics
+        multiAgent: {
+          workflowReport: multiAgentWorkflowReport,
+          briefReport: multiAgentBriefReport,
+          diagnostics: multiAgentDiagnostics
+        },
+        singlePass: {
+          briefReport: singlePassBriefReport,
+          diagnostics: singlePassResult.diagnostics
+        },
+        comparison: {
+          briefScoreDelta: multiAgentBriefReport.score - singlePassBriefReport.score,
+          modelCallAttemptRatio: ratio(
+            multiAgentDiagnostics?.modelCallCount ?? 0,
+            singlePassResult.diagnostics.modelCallCount
+          ),
+          totalTokenRatio: ratio(
+            totalTokens(multiAgentDiagnostics),
+            totalTokens(singlePassResult.diagnostics)
+          ),
+          durationRatio: ratio(
+            multiAgentDiagnostics?.durationMs ?? 0,
+            singlePassResult.diagnostics.durationMs
+          )
+        }
       });
 
-      expect(report, JSON.stringify(report, null, 2)).toMatchObject({ passed: true });
+      expect(models.size, "Both systems must use the same model.").toBe(1);
+      expect(
+        multiAgentWorkflowReport,
+        JSON.stringify(multiAgentWorkflowReport, null, 2)
+      ).toMatchObject({ passed: true });
     },
     20 * 60 * 1_000
   );

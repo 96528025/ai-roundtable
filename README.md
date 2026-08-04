@@ -15,7 +15,7 @@ The interface presents the brief first while keeping the complete discussion and
 - **Structured moderator synthesis** — returns consensus, disagreements, risks, a concrete next step, and a follow-up question.
 - **Privacy-safe diagnostics** — records run ID, stage, latency, model, token usage, and error category without logging the idea, prompts, or transcript.
 - **Bounded cost and failure handling** — caps idea input at 5,000 characters and retries transient connection, rate-limit, and 5xx failures with bounded exponential backoff.
-- **Reproducible quality evaluation** — includes offline evaluator tests and five opt-in live cases for transcript integrity, cross-agent engagement, disagreement preservation, summary completeness, and actionability.
+- **Paired quality evaluation** — compares the 16-call roundtable with a one-call control using the same model, idea, agenda, output contract, and output-only scoring rubric, while separately checking roundtable orchestration integrity.
 - **No-key sample brief** — lets a reviewer inspect a complete illustrative result without an Anthropic API key or a paid model call.
 
 ## How It Works
@@ -77,13 +77,13 @@ Create `.env.local` in the project root:
 
 ```bash
 ANTHROPIC_API_KEY=your_api_key_here
-ANTHROPIC_MODEL=your_model_id
+ANTHROPIC_MODEL=claude-sonnet-4-6
 ANTHROPIC_TIMEOUT_MS=60000
 ANTHROPIC_MAX_RETRIES=2
 ANTHROPIC_RETRY_BASE_DELAY_MS=500
 ```
 
-These settings are optional except for `ANTHROPIC_API_KEY`. The current defaults are `claude-3-5-sonnet-latest`, a 60-second timeout per attempt, two retries, and a 500ms exponential-backoff base. Use an explicit model ID supported by your Anthropic account.
+These settings are optional except for `ANTHROPIC_API_KEY`. The current defaults are `claude-sonnet-4-6`, a 60-second timeout per attempt, two retries, and a 500ms exponential-backoff base. Pin an explicit model ID so evaluation results remain reproducible.
 
 Start the application:
 
@@ -214,21 +214,28 @@ Run deterministic unit and evaluator tests without calling a model:
 npm test
 ```
 
-Run one live evaluation case as a smoke test:
+Run one paired live case as a smoke test:
 
 ```bash
 npm run eval:smoke
 ```
 
-Run all five live cases:
+Run all five paired cases:
 
 ```bash
 npm run eval
 ```
 
-Live evaluations load `.env.local` when `ANTHROPIC_API_KEY` is not already exported. A single case runs a complete 16-call roundtable; the full suite runs five complete workflows and therefore incurs model usage and can take several minutes.
+Live evaluations load `.env.local` when `ANTHROPIC_API_KEY` is not already exported. Each paired case runs one single-pass control followed by the complete 16-call roundtable, for 17 logical calls before retries. The five-case suite uses 85 logical calls and can take several minutes.
 
-Every live run writes `evals/results/latest.json`. The baseline contains the model, timestamp, Git commit and dirty-state flag, aggregate score, pass count, latency, token usage, and per-case checks. It intentionally excludes ideas beyond the committed case definitions, prompts, transcripts, and model-generated prose.
+Every live run writes `evals/results/latest.json`. The baseline contains the model, timestamp, Git commit and dirty-state flag, separate multi-agent and single-pass brief scores, workflow-integrity score, latency, token usage, model-call ratio, and per-case checks. It intentionally excludes ideas beyond the committed case definitions, prompts, transcripts, and model-generated prose.
+
+The comparison uses two layers:
+
+- **Shared brief rubric:** scores both systems on executive-summary substance, evidence sections, disagreement preservation, actionability, and follow-up specificity.
+- **Roundtable-only workflow rubric:** checks all 15 turns, named cross-agent engagement, summary completeness, disagreement preservation, and actionability.
+
+These checks are transparent structural proxies, not proof that a recommendation is factually correct or useful. A human-labeled review remains necessary before making broad quality claims.
 
 The evaluator uses explicit, reviewable thresholds rather than claiming to measure subjective quality perfectly:
 
@@ -248,6 +255,7 @@ evals/cases.ts                      Five fixed live evaluation scenarios
 evals/roundtable.eval.test.ts       Opt-in model quality regression suite
 lib/agents.ts                       Panel-specific persona definitions
 lib/claude.ts                       Timed Anthropic client and error classification
+lib/control.ts                      One-call comparison baseline
 lib/debate.ts                       Validation, orchestration, and synthesis
 lib/demo.ts                         Clearly labeled, no-key illustrative result
 lib/errors.ts                       Typed application errors and HTTP response mapping

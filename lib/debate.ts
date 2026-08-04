@@ -215,6 +215,19 @@ function extractJsonObject(raw: string): string {
   return raw.slice(start, end + 1);
 }
 
+export function parseRoundtableSummary(raw: string): RoundtableSummary {
+  try {
+    return validateSummary(JSON.parse(extractJsonObject(raw)));
+  } catch (error) {
+    if (error instanceof AppError) throw error;
+    throw new AppError("The moderator returned invalid JSON.", {
+      code: "INVALID_MODEL_RESPONSE",
+      status: 502,
+      cause: error
+    });
+  }
+}
+
 function validateSummary(value: unknown): RoundtableSummary {
   const summary =
     typeof value === "object" && value !== null
@@ -284,16 +297,7 @@ Be decisive and concrete. Include the strongest disagreement instead of smoothin
     { temperature: 0.35, maxTokens: 1200, stage: "moderator_synthesis", observer }
   );
 
-  try {
-    return validateSummary(JSON.parse(extractJsonObject(raw)));
-  } catch (error) {
-    if (error instanceof AppError) throw error;
-    throw new AppError("The moderator returned invalid JSON.", {
-      code: "INVALID_MODEL_RESPONSE",
-      status: 502,
-      cause: error
-    });
-  }
+  return parseRoundtableSummary(raw);
 }
 
 export async function runRoundtable(

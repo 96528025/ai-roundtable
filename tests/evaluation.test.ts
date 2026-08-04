@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { getPersonaAgents } from "@/lib/agents";
 import { demoResult } from "@/lib/demo";
-import { evaluateRoundtable } from "@/lib/evaluation";
+import { evaluateDecisionBrief, evaluateRoundtable } from "@/lib/evaluation";
 import type { DebateEntry, RoundtableResult } from "@/types";
 
 function strongFixture(): RoundtableResult {
@@ -42,6 +42,13 @@ function strongFixture(): RoundtableResult {
 }
 
 describe("roundtable quality evaluator", () => {
+  it("uses the same output-only rubric for experiment and control briefs", () => {
+    const report = evaluateDecisionBrief(strongFixture().summary);
+
+    expect(report.passed).toBe(true);
+    expect(report.score).toBe(100);
+  });
+
   it("passes the illustrative sample shipped with the interface", () => {
     const report = evaluateRoundtable(demoResult);
 
@@ -71,5 +78,6 @@ describe("roundtable quality evaluator", () => {
     expect(
       report.checks.find((check) => check.name === "disagreement_preservation")?.passed
     ).toBe(false);
+    expect(evaluateDecisionBrief(weak.summary).passed).toBe(false);
   });
 });

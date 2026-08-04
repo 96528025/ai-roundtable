@@ -189,7 +189,7 @@ export async function callClaude(
   options: ClaudeOptions = {}
 ): Promise<string> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
-  const model = process.env.ANTHROPIC_MODEL || "claude-3-5-sonnet-latest";
+  const model = process.env.ANTHROPIC_MODEL || "claude-sonnet-4-6";
   const stage = options.stage || "unspecified";
 
   if (!apiKey) {
