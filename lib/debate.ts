@@ -15,6 +15,12 @@ import type {
   RoundtableSummary
 } from "@/types";
 
+// The synthesis call runs last, so losing it discards every completed persona turn.
+// Both values exist to protect that call: headroom against truncation, and a small
+// number of identical resamples when the report still comes back unparseable.
+const MODERATOR_MAX_TOKENS = 2_000;
+const MODERATOR_PARSE_ATTEMPTS = 3;
+
 const defaultAgenda = [
   "Audience demand",
   "Differentiation",
@@ -264,11 +270,10 @@ async function synthesizeSummary(
   transcript: DebateEntry[],
   observer: RunObserver
 ): Promise<RoundtableSummary> {
-  const raw = await callClaude(
-    [
-      {
-        role: "user",
-        content: `The private roundtable has finished.
+  const messages = [
+    {
+      role: "user" as const,
+      content: `The private roundtable has finished.
 
 Original user idea:
 ${idea}
@@ -288,16 +293,42 @@ Produce the final report for the user. Return only valid JSON with this exact sh
   "recommendedNextStep": "string",
   "followUpQuestion": "string"
 }`
-      }
-    ],
-    `You are the AI Roundtable moderator.
+    }
+  ];
+  const systemPrompt = `You are the AI Roundtable moderator.
 You synthesize the private debate into a clear, structured report.
 The user should see your final summary first, not raw agent output.
-Be decisive and concrete. Include the strongest disagreement instead of smoothing everything over.`,
-    { temperature: 0.35, maxTokens: 1200, stage: "moderator_synthesis", observer }
-  );
+Be decisive and concrete. Include the strongest disagreement instead of smoothing everything over.`;
 
-  return parseRoundtableSummary(raw);
+  let lastError: AppError | undefined;
+
+  for (let attempt = 1; attempt <= MODERATOR_PARSE_ATTEMPTS; attempt += 1) {
+    const raw = await callClaude(messages, systemPrompt, {
+      temperature: 0.35,
+      maxTokens: MODERATOR_MAX_TOKENS,
+      stage:
+        attempt === 1
+          ? "moderator_synthesis"
+          : `moderator_synthesis.resample_${attempt - 1}`,
+      observer
+    });
+
+    try {
+      return parseRoundtableSummary(raw);
+    } catch (error) {
+      // Only an unusable report is worth resampling. Any other failure is either
+      // deterministic or already handled by the transport-level retry in callClaude.
+      if (!(error instanceof AppError) || error.code !== "INVALID_MODEL_RESPONSE") {
+        throw error;
+      }
+      lastError = error;
+    }
+  }
+
+  throw lastError ?? new AppError("The moderator produced no usable report.", {
+    code: "INVALID_MODEL_RESPONSE",
+    status: 502
+  });
 }
 
 export async function runRoundtable(
