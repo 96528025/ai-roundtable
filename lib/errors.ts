@@ -10,6 +10,8 @@ export type AppErrorCode =
   | "UPSTREAM_FAILURE"
   | "UPSTREAM_NETWORK"
   | "INVALID_MODEL_RESPONSE"
+  | "BUDGET_EXHAUSTED"
+  | "LIVE_MODE_DISABLED"
   | "INTERNAL_ERROR";
 
 type AppErrorOptions = {
