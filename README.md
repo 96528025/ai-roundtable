@@ -2,6 +2,8 @@
 
 > Turn one idea into a structured debate—and the debate into an actionable decision brief.
 
+**[Open the public sample-only demo](https://ai-roundtable-mu.vercel.app)** · [Review the paired evaluation baseline](evals/results/latest.json)
+
 AI Roundtable is a human-approved, persona-based deliberation prototype for evaluating product ideas, startup concepts, and personal decisions. Instead of asking one model for a generic opinion, it prepares an editable agenda, runs five complementary perspectives through a shared three-round discussion, and produces a structured decision brief.
 
 The interface presents the brief first while keeping the complete discussion and privacy-safe run diagnostics available for inspection.
