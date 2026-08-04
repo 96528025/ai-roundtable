@@ -7,7 +7,10 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "eval": "RUN_LIVE_EVALS=true vitest run evals/roundtable.eval.test.ts",
+    "eval:smoke": "RUN_LIVE_EVALS=true EVAL_CASE_LIMIT=1 vitest run evals/roundtable.eval.test.ts"
   },
   "dependencies": {
     "next": "^15.0.0",
@@ -20,6 +23,7 @@
     "@types/react-dom": "^19.0.0",
     "eslint": "^8.57.0",
     "eslint-config-next": "^15.0.0",
-    "typescript": "^5.0.0"
+    "typescript": "^5.0.0",
+    "vitest": "^4.1.10"
   }
 }
