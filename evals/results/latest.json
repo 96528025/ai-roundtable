@@ -1,0 +1,199 @@
+{
+  "generatedAt": "2026-08-04T20:43:30.028Z",
+  "evaluatorVersion": 2,
+  "experiment": "multi-agent roundtable vs single-pass control",
+  "git": {
+    "commit": "dc11997cce9bec4ffb4e59c2d0919b11800fdc59",
+    "dirty": false
+  },
+  "models": [
+    "claude-sonnet-4-6"
+  ],
+  "caseCount": 1,
+  "multiAgent": {
+    "passedWorkflowCases": 1,
+    "averageWorkflowScore": 100,
+    "averageBriefScore": 100,
+    "totalDurationMs": 137514,
+    "totalTokens": 36718
+  },
+  "singlePass": {
+    "passedBriefCases": 1,
+    "averageBriefScore": 100,
+    "totalDurationMs": 25603,
+    "totalTokens": 1089
+  },
+  "comparison": {
+    "averageBriefScoreDelta": 0,
+    "averageModelCallAttemptRatio": 16,
+    "averageTotalTokenRatio": 33.7,
+    "averageDurationRatio": 5.4
+  },
+  "outcomes": [
+    {
+      "caseName": "consultant workflow",
+      "panelMode": "startup",
+      "multiAgent": {
+        "workflowReport": {
+          "score": 100,
+          "passed": true,
+          "checks": [
+            {
+              "name": "transcript_integrity",
+              "passed": true,
+              "score": 30,
+              "maxScore": 30,
+              "detail": "15/15 turns; 15 unique round-agent pairs."
+            },
+            {
+              "name": "cross_agent_engagement",
+              "passed": true,
+              "score": 25,
+              "maxScore": 25,
+              "detail": "10/10 round 2-3 turns name another agent."
+            },
+            {
+              "name": "disagreement_preservation",
+              "passed": true,
+              "score": 15,
+              "maxScore": 15,
+              "detail": "2 explicit disagreement(s) in the final brief."
+            },
+            {
+              "name": "summary_completeness",
+              "passed": true,
+              "score": 15,
+              "maxScore": 15,
+              "detail": "Checks the required summary fields for non-trivial content."
+            },
+            {
+              "name": "next_step_actionability",
+              "passed": true,
+              "score": 15,
+              "maxScore": 15,
+              "detail": "Requires a concrete action plus a numeric or time-bound constraint."
+            }
+          ]
+        },
+        "briefReport": {
+          "score": 100,
+          "passed": true,
+          "checks": [
+            {
+              "name": "executive_summary_substance",
+              "passed": true,
+              "score": 20,
+              "maxScore": 20,
+              "detail": "Requires a non-trivial executive summary."
+            },
+            {
+              "name": "evidence_sections",
+              "passed": true,
+              "score": 20,
+              "maxScore": 20,
+              "detail": "Requires non-trivial consensus and risk sections."
+            },
+            {
+              "name": "disagreement_preservation",
+              "passed": true,
+              "score": 20,
+              "maxScore": 20,
+              "detail": "2 explicit disagreement(s)."
+            },
+            {
+              "name": "next_step_actionability",
+              "passed": true,
+              "score": 25,
+              "maxScore": 25,
+              "detail": "Requires a concrete action plus a numeric or time-bound constraint."
+            },
+            {
+              "name": "follow_up_specificity",
+              "passed": true,
+              "score": 15,
+              "maxScore": 15,
+              "detail": "Requires a non-trivial question."
+            }
+          ]
+        },
+        "diagnostics": {
+          "runId": "65ca988a-f550-4e22-80b2-2a097927247c",
+          "startedAt": "2026-08-04T20:41:12.478Z",
+          "durationMs": 137514,
+          "modelCallCount": 16,
+          "successfulModelCalls": 16,
+          "failedModelCalls": 0,
+          "retryCount": 0,
+          "inputTokens": 32120,
+          "outputTokens": 4598,
+          "models": [
+            "claude-sonnet-4-6"
+          ]
+        }
+      },
+      "singlePass": {
+        "briefReport": {
+          "score": 100,
+          "passed": true,
+          "checks": [
+            {
+              "name": "executive_summary_substance",
+              "passed": true,
+              "score": 20,
+              "maxScore": 20,
+              "detail": "Requires a non-trivial executive summary."
+            },
+            {
+              "name": "evidence_sections",
+              "passed": true,
+              "score": 20,
+              "maxScore": 20,
+              "detail": "Requires non-trivial consensus and risk sections."
+            },
+            {
+              "name": "disagreement_preservation",
+              "passed": true,
+              "score": 20,
+              "maxScore": 20,
+              "detail": "4 explicit disagreement(s)."
+            },
+            {
+              "name": "next_step_actionability",
+              "passed": true,
+              "score": 25,
+              "maxScore": 25,
+              "detail": "Requires a concrete action plus a numeric or time-bound constraint."
+            },
+            {
+              "name": "follow_up_specificity",
+              "passed": true,
+              "score": 15,
+              "maxScore": 15,
+              "detail": "Requires a non-trivial question."
+            }
+          ]
+        },
+        "diagnostics": {
+          "runId": "dfae6f37-ab4f-47de-bc1b-98f44b207833",
+          "startedAt": "2026-08-04T20:40:46.873Z",
+          "durationMs": 25603,
+          "modelCallCount": 1,
+          "successfulModelCalls": 1,
+          "failedModelCalls": 0,
+          "retryCount": 0,
+          "inputTokens": 220,
+          "outputTokens": 869,
+          "models": [
+            "claude-sonnet-4-6"
+          ]
+        }
+      },
+      "comparison": {
+        "briefScoreDelta": 0,
+        "modelCallAttemptRatio": 16,
+        "totalTokenRatio": 33.72,
+        "durationRatio": 5.37
+      }
+    }
+  ]
+}

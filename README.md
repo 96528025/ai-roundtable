@@ -237,6 +237,20 @@ The comparison uses two layers:
 
 These checks are transparent structural proxies, not proof that a recommendation is factually correct or useful. A human-labeled review remains necessary before making broad quality claims.
 
+### Current paired smoke baseline
+
+The committed baseline in `evals/results/latest.json` was generated on August 4, 2026 with `claude-sonnet-4-6` using the `consultant workflow` case.
+
+| Measure | Multi-agent roundtable | Single-pass control | Ratio / delta |
+| --- | ---: | ---: | ---: |
+| Shared brief score | 100 | 100 | 0-point delta |
+| Workflow-integrity score | 100 | Not applicable | Passed |
+| Model-call attempts | 16 | 1 | 16.0× |
+| Total tokens | 36,718 | 1,089 | 33.7× |
+| Duration | 137.5 seconds | 25.6 seconds | 5.4× |
+
+This one-case smoke test validates the orchestration and measurement pipeline, but it does **not** demonstrate a brief-quality advantage over one direct call. Both outputs saturated the current structural rubric. The remaining four cases and human review are required before claiming that the added deliberation cost improves decision quality.
+
 The evaluator uses explicit, reviewable thresholds rather than claiming to measure subjective quality perfectly:
 
 - all 15 expected round-agent turns are present and non-trivial
