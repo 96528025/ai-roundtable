@@ -1,60 +1,80 @@
 # AI Roundtable
 
-> Turn one idea into a structured debate—and the debate into an actionable decision brief.
+> Turn a vague product idea into an evidence-aware pre-build decision.
 
-**[Open the public sample-only demo](https://ai-roundtable-mu.vercel.app)** · [Review the paired evaluation baseline](evals/results/latest.json)
+**[Open the sample-only public demo](https://ai-roundtable-mu.vercel.app)** · [Review the committed evaluation baseline](evals/results/latest.json)
 
-AI Roundtable is a human-approved, persona-based deliberation prototype for evaluating product ideas, startup concepts, and personal decisions. Instead of asking one model for a generic opinion, it prepares an editable agenda, runs five complementary perspectives through a shared three-round discussion, and produces a structured decision brief.
+AI Roundtable helps a builder decide what deserves implementation before spending time on a polished product. The default experience is a bounded **Quick Brief**: the user describes an idea once, a Planner extracts the decision structure, and a brief writer returns an honest verdict, narrow MVP, technical direction, distribution hypothesis, monetization reality check, risks, and a seven-day validation plan.
 
-The interface presents the brief first while keeping the complete discussion and privacy-safe run diagnostics available for inspection.
+The original five-agent, three-round workflow remains available as **Full Roundtable** and as an explicit evaluation baseline. It is no longer the default: the committed smoke result used 33.7× more tokens and 5.4× more wall-clock time than one direct call without improving the shared structural brief score.
 
-## Key Features
+## Product Modes
 
-- **Human-approved agenda** — generates 3–5 proposed topics, then requires the user to edit and approve them before the model-intensive workflow begins.
-- **Two advisory panels** — offers a startup-validation panel and a general-advisory panel with different specialist perspectives.
-- **Three-stage deliberation** — moves from independent positions to named cross-responses and revised final recommendations.
-- **Accumulated discussion context** — every turn receives the transcript produced so far, allowing later agents to engage with earlier arguments.
-- **Structured moderator synthesis** — returns consensus, disagreements, risks, a concrete next step, and a follow-up question.
-- **Privacy-safe diagnostics** — records run ID, stage, latency, model, token usage, and error category without logging the idea, prompts, or transcript.
-- **Bounded cost and failure handling** — caps idea input at 5,000 characters and retries transient connection, rate-limit, and 5xx failures with bounded exponential backoff.
-- **Paired quality evaluation** — compares the 16-call roundtable with a one-call control using the same model, idea, agenda, output contract, and output-only scoring rubric, while separately checking roundtable orchestration integrity.
-- **No-key sample brief** — lets a reviewer inspect a complete illustrative result without an Anthropic API key or a paid model call.
+### Quick Brief — default
 
-## How It Works
+- One idea, with optional decision goal and constraints
+- One Planner call plus one brief-writer call on the normal path
+- Four-attempt hard budget shared by transport retries and malformed-output recovery
+- Strict runtime validation for the complete V2 output contract
+- A single primary verdict rather than automatic encouragement
+- Explicit evidence boundaries: Milestone 1 does not perform external research
+- Optional recommendation to escalate, never automatic paid Full execution
 
-1. The user enters an idea containing 10–5,000 characters and chooses an advisory panel. The browser shows a character counter, and both API routes independently enforce the same limit.
-2. `POST /api/agenda` asks Claude for 3–5 decision-relevant topics. If model access is unavailable or the response is malformed, the endpoint returns a predefined editable agenda.
-3. The user edits, removes, adds, and explicitly approves the agenda.
-4. `POST /api/roundtable` independently validates the submitted agenda: 3–5 distinct, non-empty topics with a maximum length of 160 characters each.
-5. Five panel-specific personas respond sequentially across three rounds. Rounds 2 and 3 require each persona to engage with a previous agent by name.
-6. A moderator receives the original idea, approved agenda, and complete transcript, then returns a typed decision brief.
-7. The completed result is returned even if optional local-history persistence fails.
+### Full Roundtable — optional legacy baseline
 
-A model-generated agenda plus a complete roundtable normally uses **17 sequential Anthropic API requests**: one agenda request, 15 persona turns, and one moderator synthesis. The roundtable endpoint itself uses 16 logical model calls. Transient retries can increase the number of HTTP attempts, and every attempt appears in diagnostics. Sequential execution preserves deterministic speaking order and gives every new turn access to the accumulated discussion.
+- Human-edited agenda with three to five topics
+- Five fixed personas across three sequential rounds
+- One moderator synthesis call
+- Complete internal transcript and aggregate diagnostics
+- Normally 16 logical calls after agenda approval
+
+## Quick Brief Output
+
+The V2 contract includes:
+
+- idea summary
+- calibrated initial verdict
+- target user, problem, and current workaround
+- evidence status and unanswered questions
+- existing alternatives with explicit evidence basis
+- differentiation opportunities
+- recommended MVP and exclusions
+- Web, PWA, native app, or no-build-yet recommendation
+- suggested technical approach
+- distribution and activation hypothesis
+- monetization reality check
+- material risks, assumptions, and cheap tests
+- seven-day validation plan with decision thresholds
+- one high-impact follow-up question
+
+Milestone 1 deliberately sets `evidence.status` to `not_researched`. A no-research result cannot contain external sources, externally verified alternatives, evidence claims, or a high-confidence verdict. Inferences and assumptions must be labeled as such.
 
 ## Architecture
 
 ```mermaid
-flowchart LR
-    A["Idea + Panel<br/>Next.js Client"] --> B["POST /api/agenda"]
-    B --> C["Editable Agenda<br/>3–5 Topics"]
-    C --> D["Human Approval"]
-    D --> E["POST /api/roundtable<br/>Server Revalidation"]
-    E --> F["5 Personas × 3 Rounds"]
-    F --> G["Moderator Synthesis"]
-    G --> H["Decision Brief<br/>+ Transcript"]
-    H --> I["Optional Local History"]
-    F -.-> J["Privacy-safe Metrics"]
-    G -.-> J
+flowchart TD
+    A["Idea + optional goal and constraints"] --> B["POST /api/brief"]
+    B --> C["Server validation"]
+    C --> D["Planner"]
+    D --> E["Deterministic routing signals"]
+    E --> F["Quick Brief writer"]
+    F --> G{"Runtime schema and evidence validation"}
+    G -->|Valid| H["Brief-first UI + diagnostics"]
+    G -->|Malformed and budget remains| F
+    H --> I{"Deeper work recommended?"}
+    I -->|No| J["Seven-day validation"]
+    I -->|User opts in| K["Editable Full Roundtable agenda"]
+    K --> L["Fixed 5-agent × 3-round baseline"]
 ```
 
-Key design choices:
+Key boundaries:
 
-- **Trust boundary:** the client owns agenda review, but the roundtable route treats client input as untrusted and revalidates it before any paid workflow begins.
-- **Separate synthesis stage:** deliberation remains distinct from the user-facing report so the moderator can preserve disagreement instead of flattening all opinions.
-- **Typed and runtime-checked contracts:** shared TypeScript types align the API and UI, while runtime validation rejects malformed agenda and moderator output.
-- **Progressive disclosure:** the decision brief appears first; the 15-turn transcript and diagnostics remain inspectable.
-- **Best-effort local persistence:** history supports local exploration but cannot invalidate an otherwise successful result if filesystem writes fail.
+- **Attempt-aware budget:** Quick Brief normally uses two calls and can never exceed four HTTP attempts. Each retry consumes the same shared budget.
+- **Output-token budget:** every requested output ceiling is counted before the request is sent.
+- **Evidence integrity:** source and claim IDs are validated; evidence claims require valid sources.
+- **Progressive disclosure:** the decision appears before planner details, evidence gaps, diagnostics, or the legacy transcript.
+- **No automatic escalation:** routing can recommend Full Roundtable but cannot start it.
+- **Public deployment safety:** sample mode rejects all model-backed API routes server-side, even if a key is accidentally configured.
 
 ## Tech Stack
 
@@ -65,7 +85,9 @@ Key design choices:
 | Language | TypeScript with strict type checking |
 | Model integration | Anthropic Messages API via server-side `fetch` |
 | Testing | Vitest |
-| Persistence | Optional bounded local JSON history |
+| Persistence | Optional local JSON history for legacy Full runs |
+
+LangGraph is intentionally not included. The current bounded TypeScript workflow does not yet need durable human interrupts, cross-process checkpoint recovery, or multiple conditional cycles.
 
 ## Getting Started
 
@@ -85,31 +107,82 @@ ANTHROPIC_MAX_RETRIES=2
 ANTHROPIC_RETRY_BASE_DELAY_MS=500
 ```
 
-These settings are optional except for `ANTHROPIC_API_KEY`. The current defaults are `claude-sonnet-4-6`, a 60-second timeout per attempt, two retries, and a 500ms exponential-backoff base. Pin an explicit model ID so evaluation results remain reproducible.
-
 Start the application:
 
 ```bash
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000). Select **View sample brief** to inspect the complete interface without configuring an API key. The sample is explicitly labeled as illustrative and is not presented as a live model result.
+Open [http://localhost:3000](http://localhost:3000). Select **View sample** to inspect the complete Quick Brief interface without configuring a key.
 
 ### Safe public portfolio mode
 
-For a public deployment, set the non-secret environment variable below and leave `ANTHROPIC_API_KEY` unset:
+Set the following non-secret variable and leave `ANTHROPIC_API_KEY` unset:
 
 ```bash
 NEXT_PUBLIC_DEMO_MODE=sample
 ```
 
-This mode replaces the live-input form with an explicit portfolio-demo panel. Reviewers can inspect the complete pre-generated decision brief, 15-turn transcript, and illustrative diagnostics without triggering an API route or consuming model credits. Local development remains fully interactive when the variable is absent. `.vercelignore` explicitly excludes all `.env*` files as an additional safeguard against uploading local credentials.
+Sample mode replaces live input with a pre-generated result. `POST /api/brief`, `POST /api/agenda`, and `POST /api/roundtable` also return `403 LIVE_MODE_DISABLED` before any model call. `.vercelignore` excludes every `.env*` file.
 
 ## API
 
-### `POST /api/agenda`
+### `POST /api/brief`
 
 Request:
+
+```json
+{
+  "idea": "A browser extension that turns messy shopping tabs into a decision brief.",
+  "goal": "Decide whether to build an MVP.",
+  "constraints": ["One week to prototype", "Start with one product category"]
+}
+```
+
+The response contains:
+
+```json
+{
+  "frame": {
+    "summary": "...",
+    "assumptions": ["..."],
+    "unknowns": [{ "question": "...", "mayChangeVerdict": true }]
+  },
+  "route": {
+    "selectedPath": "quick",
+    "fullRoundtableRecommended": false,
+    "reasonCodes": ["default_quick_path"]
+  },
+  "brief": {
+    "schemaVersion": "2.0",
+    "mode": "quick",
+    "verdict": {
+      "decision": "validate_before_building",
+      "confidence": "medium",
+      "flags": ["evidence_gap"]
+    },
+    "evidence": {
+      "status": "not_researched",
+      "sources": []
+    }
+  },
+  "budget": {
+    "maxCallAttempts": 4,
+    "usedCallAttempts": 2
+  },
+  "diagnostics": {
+    "modelCallCount": 2,
+    "inputTokens": 1234,
+    "outputTokens": 1200
+  }
+}
+```
+
+Normal execution is Planner → brief writer. A malformed Planner frame or final brief may be resampled once while preserving capacity for the remaining stage. Transient failures can retry only while the shared attempt and output-token budgets retain capacity.
+
+### `POST /api/agenda`
+
+Prepares an editable three-to-five-topic agenda for optional Full Roundtable execution.
 
 ```json
 {
@@ -118,201 +191,127 @@ Request:
 }
 ```
 
-Success response:
-
-```json
-{
-  "idea": "A browser extension that turns messy shopping tabs into a decision brief.",
-  "panelMode": "startup",
-  "topics": ["User pain", "Differentiation", "MVP scope", "Trust", "Validation plan"],
-  "diagnostics": {
-    "runId": "...",
-    "modelCallCount": 1,
-    "successfulModelCalls": 1,
-    "failedModelCalls": 0,
-    "retryCount": 0
-  }
-}
-```
-
-If agenda generation fails, the endpoint returns an editable fallback agenda. Diagnostics will show the failed call without exposing the input content.
-
 ### `POST /api/roundtable`
 
-Request:
+Runs the fixed legacy workflow after server-side agenda validation.
 
 ```json
 {
   "idea": "A browser extension that turns messy shopping tabs into a decision brief.",
   "panelMode": "startup",
-  "topics": ["User pain", "Differentiation", "MVP scope", "Trust", "Validation plan"]
+  "topics": ["User pain", "Differentiation", "MVP scope", "Trust"]
 }
 ```
 
-Simplified success response:
+## Error Contract
 
-```json
-{
-  "agenda": ["User pain", "Differentiation", "MVP scope", "Trust", "Validation plan"],
-  "panelMode": "startup",
-  "summary": {
-    "executiveSummary": "...",
-    "consensus": ["..."],
-    "disagreements": ["..."],
-    "risks": ["..."],
-    "recommendedNextStep": "...",
-    "followUpQuestion": "..."
-  },
-  "transcript": [
-    { "round": 1, "agentName": "Customer Strategist", "content": "..." }
-  ],
-  "diagnostics": {
-    "runId": "...",
-    "durationMs": 12345,
-    "modelCallCount": 16,
-    "successfulModelCalls": 16,
-    "failedModelCalls": 0,
-    "retryCount": 0,
-    "inputTokens": 1234,
-    "outputTokens": 567,
-    "models": ["configured-model-id"]
-  }
-}
-```
-
-Invalid input, missing configuration, upstream API failures, timeouts, empty model responses, and malformed moderator output return a structured error:
-
-```json
-{
-  "error": "The AI service is rate-limited. Please try again shortly.",
-  "code": "UPSTREAM_RATE_LIMIT",
-  "retryable": true,
-  "requestId": "req_..."
-}
-```
-
-HTTP status codes preserve the failure boundary:
+Public errors contain a safe message, typed code, retryability, and an upstream request ID when available.
 
 | Failure | Status |
 | --- | ---: |
-| Invalid JSON, idea, or agenda | `400` |
-| Anthropic rate limit after retries | `429` |
-| Missing server configuration or temporary overload | `503` |
-| Anthropic timeout after retries | `504` |
-| Upstream authentication, request, network, or 5xx failure | `502` |
+| Invalid JSON, idea, goal, constraints, or agenda | `400` |
+| Sample-only execution guard | `403` |
+| Anthropic rate limit after budgeted retries | `429` |
+| Missing configuration, overload, or workflow budget exhaustion | `503` |
+| Anthropic timeout | `504` |
+| Authentication, network, malformed output, or other upstream failure | `502` |
 | Unexpected internal failure | `500` |
-
-Transient connection errors, `429`, `500–599`, and Anthropic `529` responses are retried up to two times by default. Retries use bounded exponential backoff with jitter and honor `retry-after` when Anthropic supplies it. Authentication, validation, and empty-response failures are not retried.
-
-Malformed-report failures are handled separately at the moderator synthesis step, because that call runs last: discarding it also discards fifteen completed persona turns. When the report cannot be parsed, the orchestrator resamples the same request up to two additional times (`moderator_synthesis.resample_1`, `resample_2`) before failing the workflow. The resample is deliberately identical — same messages, same temperature — so a recovered run stays a fair sample rather than a differently prompted one. See [docs/2026-08-04-moderator-truncation.md](docs/2026-08-04-moderator-truncation.md) for the measured failure rate that motivated this.
 
 ## Observability and Privacy
 
-Every agenda or roundtable workflow receives a unique run ID. Each model call emits a structured server log with:
+Each workflow has a run ID. Model-call logs include:
 
-- workflow and stage name
-- success or failure for every attempt
-- attempt number, retry delay, upstream status, and request ID when available
-- duration in milliseconds
-- resolved model name
-- input and output token counts when provided by Anthropic
-- the Anthropic stop reason, which distinguishes a complete response from one cut off at the token ceiling
-- coarse error category such as configuration, timeout, network, authentication, rate limit, upstream, or empty response
+- workflow and stage
+- success or failure
+- attempt, latency, retry delay, upstream status, and request ID
+- resolved model
+- input and output token usage
+- Anthropic stop reason
+- coarse error category
 
-The logs intentionally exclude the user's idea, system prompt, messages, model output, and transcript. Successful roundtable responses include aggregate diagnostics so the UI and API consumer can inspect latency and usage without accessing server logs.
+Logs intentionally exclude the idea, goal, constraints, prompts, planner frame, model output, final brief, and transcript.
 
 ## Evaluation
 
-Run deterministic unit and evaluator tests without calling a model:
+Run deterministic tests without calling a model:
 
 ```bash
 npm test
 ```
 
-Run one paired live case as a smoke test:
+The original paired baseline remains available:
 
 ```bash
 npm run eval:smoke
-```
-
-Run all five paired cases:
-
-```bash
 npm run eval
 ```
 
-Live evaluations load `.env.local` when `ANTHROPIC_API_KEY` is not already exported. Each paired case runs one single-pass control followed by the complete 16-call roundtable, for 17 logical calls before retries. The five-case suite uses 85 logical calls and can take several minutes.
+The V2 harness compares all three treatments on the same model and idea:
 
-Every live run writes `evals/results/latest.json`. The baseline contains the model, timestamp, Git commit and dirty-state flag, separate multi-agent and single-pass brief scores, workflow-integrity score, latency, token usage, model-call ratio, and per-case checks. It intentionally excludes ideas beyond the committed case definitions, prompts, transcripts, and model-generated prose.
+1. one-call Direct Brief
+2. two-call Planned Quick Brief
+3. fixed five-agent, three-round workflow
 
-The comparison uses two layers:
+```bash
+npm run eval:v2:smoke
+npm run eval:v2
+```
 
-- **Shared brief rubric:** scores both systems on executive-summary substance, evidence sections, disagreement preservation, actionability, and follow-up specificity.
-- **Roundtable-only workflow rubric:** checks all 15 turns, named cross-agent engagement, summary completeness, disagreement preservation, and actionability.
+Live commands are opt-in and must not be run without explicit cost approval. V2 results are written to `evals/results/v2-latest.json`, separate from the committed legacy baseline. The file records whether every intended case completed and lists missing cases instead of silently presenting a partial run as complete.
 
-These checks are transparent structural proxies, not proof that a recommendation is factually correct or useful. A human-labeled review remains necessary before making broad quality claims.
+Automated V2 scoring checks verdict calibration, evidence honesty, MVP scope, risk testability, seven-day thresholds, and follow-up impact. These are structural proxies. The harness explicitly records human decision-usefulness ratings as `not_collected` until real blinded review occurs.
 
-### Current paired smoke baseline
+### Committed legacy smoke baseline
 
-The committed baseline in `evals/results/latest.json` was generated on August 4, 2026 with `claude-sonnet-4-6` using the `consultant workflow` case.
+The committed one-case result used `claude-sonnet-4-6`:
 
-| Measure | Multi-agent roundtable | Single-pass control | Ratio / delta |
+| Measure | Fixed roundtable | Single-pass control | Ratio / delta |
 | --- | ---: | ---: | ---: |
-| Shared brief score | 100 | 100 | 0-point delta |
-| Workflow-integrity score | 100 | Not applicable | Passed |
+| Shared structural brief score | 100 | 100 | 0-point delta |
 | Model-call attempts | 16 | 1 | 16.0× |
 | Total tokens | 36,718 | 1,089 | 33.7× |
 | Duration | 137.5 seconds | 25.6 seconds | 5.4× |
 
-This one-case smoke test validates the orchestration and measurement pipeline, but it does **not** demonstrate a brief-quality advantage over one direct call. Both outputs saturated the current structural rubric. The remaining four cases and human review are required before claiming that the added deliberation cost improves decision quality.
-
-The evaluator uses explicit, reviewable thresholds rather than claiming to measure subjective quality perfectly:
-
-- all 15 expected round-agent turns are present and non-trivial
-- at least 80% of round 2–3 turns mention another agent by name
-- the final brief preserves at least one substantive disagreement
-- all summary sections contain non-trivial content
-- the recommended next step contains an action plus a numeric or time-bound constraint
+This result validates orchestration and measurement only. It does not demonstrate a multi-agent quality advantage.
 
 ## Project Structure
 
 ```text
-app/page.tsx                        Human-approved workflow, sample, report, and diagnostics UI
-app/api/agenda/route.ts             Agenda generation and fallback boundary
-app/api/roundtable/route.ts         Validated orchestration and best-effort persistence boundary
-docs/                               Dated incident and design records
-evals/cases.ts                      Five fixed live evaluation scenarios
-evals/roundtable.eval.test.ts       Opt-in model quality regression suite
-lib/agents.ts                       Panel-specific persona definitions
-lib/claude.ts                       Timed Anthropic client and error classification
-lib/control.ts                      One-call comparison baseline
-lib/debate.ts                       Validation, orchestration, and synthesis
-lib/demo.ts                         Clearly labeled, no-key illustrative result
-lib/errors.ts                       Typed application errors and HTTP response mapping
-lib/evaluation.ts                   Deterministic quality checks and scoring
-lib/history.ts                      Local JSON history capped at 50 meetings
-lib/limits.ts                       Shared client/server input limits
-lib/observability.ts                Privacy-safe run and model-call metrics
-tests/                              Offline workflow and evaluator tests
-types.ts                            Shared application and diagnostics contracts
+app/page.tsx                        Quick-first product flow and optional Full workflow
+app/quick-brief-report.tsx          V2 decision-brief presentation
+app/api/brief/route.ts              Bounded Quick Brief API
+app/api/agenda/route.ts             Optional Full agenda boundary
+app/api/roundtable/route.ts         Fixed Full workflow and local-history boundary
+lib/v2/types.ts                     V2 state and output contracts
+lib/v2/validation.ts                Runtime schema and evidence-integrity checks
+lib/v2/budget.ts                    Shared attempt and requested-output budget
+lib/v2/planner.ts                   Planner and deterministic routing signals
+lib/v2/quick-brief.ts               Direct and planned Quick workflows
+lib/v2/demo.ts                      No-key V2 sample result
+lib/debate.ts                       Legacy fixed orchestration
+lib/claude.ts                       Anthropic transport and error classification
+lib/evaluation.ts                   Legacy and V2 structural evaluators
+evals/adaptive.eval.test.ts         Opt-in three-treatment V2 harness
+evals/roundtable.eval.test.ts       Opt-in legacy paired harness
+tests/                              Offline regression and budget tests
 ```
 
 ## Current Scope
 
-- This is a single-user prototype with fixed panel membership, speaking order, and round count.
-- Model calls run sequentially; the interface does not stream intermediate results or recover a partially completed workflow.
-- Local meeting history has no listing or reopening interface and is not durable on ephemeral serverless deployments.
-- There is no authentication or user isolation, and prompts are processed by Anthropic rather than on-device.
-- The evaluator checks explicit behavioral proxies; it does not replace human review for factuality, safety, or decision quality.
-- The repository includes a self-contained sample but does not by itself provide a hosted deployment URL.
+- Milestone 1 does not perform Web or GitHub research.
+- Full Roundtable still has fixed membership, order, and round count.
+- Neither workflow streams intermediate state or resumes from a durable checkpoint.
+- Local Full history is not durable on serverless deployments.
+- There is no authentication, user isolation, or public live-model mode.
+- Structural evaluators do not prove factual correctness or decision usefulness.
 
-## Future Improvements
+## Next Milestones
 
-- Persist per-stage state so interrupted workflows can resume without repeating completed model calls.
-- Stream round and persona progress to the interface.
-- Replace local JSON storage with database-backed, user-specific meeting history.
-- Add authentication, retention controls, and a user-facing deletion workflow.
-- Add human-labeled eval cases for factual faithfulness, agenda coverage, and decision usefulness.
+1. Add a controlled Research Scout with first-party source preference and clickable citations.
+2. Add dynamic expert selection and same-snapshot parallel analysis.
+3. Add critic-based stopping and evidence-sensitive escalation.
+4. Introduce LangGraph only when durable interrupt, checkpoint, and resume behavior is required.
+5. Store decision history, experiments, outcomes, and verdict changes rather than persona memory.
 
 ## Validation
 

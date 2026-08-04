@@ -1,4 +1,5 @@
 import { getPersonaAgents } from "@/lib/agents";
+import type { IdeaBrief } from "@/lib/v2/types";
 import type { DebateEntry, RoundtableResult, RoundtableSummary } from "@/types";
 
 export type EvaluationCheck = {
@@ -93,6 +94,93 @@ export function evaluateDecisionBrief(summary: RoundtableSummary): EvaluationRep
   return {
     score,
     passed: score >= 80 && disagreementPassed && actionabilityPassed,
+    checks
+  };
+}
+
+export function evaluateIdeaBrief(brief: IdeaBrief): EvaluationReport {
+  const verdictPassed =
+    validText(brief.verdict.rationale, 80) &&
+    brief.verdict.decision.length > 0 &&
+    !(brief.evidence.status === "not_researched" && brief.verdict.confidence === "high");
+  const evidenceHonestyPassed =
+    brief.evidence.unansweredQuestions.length > 0 &&
+    (brief.evidence.status !== "not_researched" ||
+      (brief.evidence.sources.length === 0 &&
+        brief.evidence.claims.every((claim) => claim.kind !== "evidence") &&
+        brief.verdict.flags.includes("evidence_gap")));
+  const mvpPassed =
+    validText(brief.recommendedMvp.productPromise, 30) &&
+    brief.recommendedMvp.mustHave.length > 0 &&
+    brief.recommendedMvp.notNow.length > 0 &&
+    validText(brief.recommendedMvp.successSignal, 40);
+  const riskPassed =
+    brief.biggestRisksAndAssumptions.length >= 2 &&
+    brief.biggestRisksAndAssumptions.every(
+      (risk) => validText(risk.risk, 20) && validText(risk.cheapestTest, 20)
+    );
+  const validationPassed =
+    brief.validationPlan7Days.length >= 3 &&
+    brief.validationPlan7Days.every(
+      (step) =>
+        validText(step.action, 20) &&
+        validText(step.evidenceToCollect, 20) &&
+        validText(step.decisionThreshold, 20)
+    );
+  const followUpPassed =
+    validText(brief.followUpQuestion.question, 20) &&
+    brief.followUpQuestion.question.endsWith("?") &&
+    validText(brief.followUpQuestion.answerCouldChange, 20);
+
+  const checks: EvaluationCheck[] = [
+    {
+      name: "verdict_decisiveness",
+      passed: verdictPassed,
+      score: verdictPassed ? 20 : 0,
+      maxScore: 20,
+      detail: "Requires a clear, calibrated verdict with substantive rationale."
+    },
+    {
+      name: "evidence_honesty",
+      passed: evidenceHonestyPassed,
+      score: evidenceHonestyPassed ? 20 : 0,
+      maxScore: 20,
+      detail: "Requires explicit evidence gaps and no unsupported sourced claims."
+    },
+    {
+      name: "mvp_scope",
+      passed: mvpPassed,
+      score: mvpPassed ? 20 : 0,
+      maxScore: 20,
+      detail: "Requires a bounded promise, must-haves, exclusions, and success signal."
+    },
+    {
+      name: "risk_testability",
+      passed: riskPassed,
+      score: riskPassed ? 15 : 0,
+      maxScore: 15,
+      detail: "Requires at least two material risks with cheap tests."
+    },
+    {
+      name: "seven_day_validation",
+      passed: validationPassed,
+      score: validationPassed ? 20 : 0,
+      maxScore: 20,
+      detail: "Requires actions, evidence, and decision thresholds across at least three steps."
+    },
+    {
+      name: "follow_up_impact",
+      passed: followUpPassed,
+      score: followUpPassed ? 5 : 0,
+      maxScore: 5,
+      detail: "Requires one question and an explanation of how the answer changes the decision."
+    }
+  ];
+  const score = checks.reduce((total, check) => total + check.score, 0);
+
+  return {
+    score,
+    passed: score >= 80 && verdictPassed && evidenceHonestyPassed && validationPassed,
     checks
   };
 }

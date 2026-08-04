@@ -1,8 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { getPersonaAgents } from "@/lib/agents";
 import { demoResult } from "@/lib/demo";
-import { evaluateDecisionBrief, evaluateRoundtable } from "@/lib/evaluation";
+import {
+  evaluateDecisionBrief,
+  evaluateIdeaBrief,
+  evaluateRoundtable
+} from "@/lib/evaluation";
 import type { DebateEntry, RoundtableResult } from "@/types";
+import { ideaBriefFixture } from "./v2-fixtures";
 
 function strongFixture(): RoundtableResult {
   const names = getPersonaAgents("startup").map((agent) => agent.name);
@@ -42,6 +47,22 @@ function strongFixture(): RoundtableResult {
 }
 
 describe("roundtable quality evaluator", () => {
+  it("passes an honest, bounded and testable V2 Idea Brief", () => {
+    const report = evaluateIdeaBrief(ideaBriefFixture);
+
+    expect(report).toMatchObject({ passed: true, score: 100 });
+  });
+
+  it("fails a V2 brief that hides its evidence gap", () => {
+    const brief = structuredClone(ideaBriefFixture);
+    brief.verdict.flags = [];
+
+    const report = evaluateIdeaBrief(brief);
+    expect(report.passed).toBe(false);
+    expect(report.checks.find((check) => check.name === "evidence_honesty")?.passed)
+      .toBe(false);
+  });
+
   it("uses the same output-only rubric for experiment and control briefs", () => {
     const report = evaluateDecisionBrief(strongFixture().summary);
 
