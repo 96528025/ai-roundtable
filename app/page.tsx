@@ -1,12 +1,15 @@
 "use client";
 
 import { FormEvent, useState } from "react";
-import { demoIdea, demoResult } from "@/lib/demo";
+import { QuickBriefReport } from "@/app/quick-brief-report";
+import { demoIdea } from "@/lib/demo";
+import { demoQuickResult } from "@/lib/v2/demo";
 import {
   IDEA_MAX_CHARACTERS,
   IDEA_MIN_CHARACTERS,
   TOPIC_MAX_CHARACTERS
 } from "@/lib/limits";
+import type { QuickBriefDisplayResult } from "@/lib/v2/types";
 import type { PanelMode, RoundtableResult } from "@/types";
 
 const examples = [
@@ -51,47 +54,98 @@ function panelName(panelMode: PanelMode): string {
   return panelMode === "startup" ? "Startup Validation" : "General Advisory";
 }
 
+function constraintsFromText(value: string): string[] {
+  return value
+    .split("\n")
+    .map((constraint) => constraint.trim())
+    .filter(Boolean);
+}
+
 export default function Home() {
   const [idea, setIdea] = useState("");
+  const [goal, setGoal] = useState("");
+  const [constraintsText, setConstraintsText] = useState("");
   const [panelMode, setPanelMode] = useState<PanelMode>("startup");
   const [agenda, setAgenda] = useState<string[] | null>(null);
-  const [result, setResult] = useState<RoundtableResult | null>(null);
+  const [quickResult, setQuickResult] = useState<QuickBriefDisplayResult | null>(null);
+  const [quickResultSource, setQuickResultSource] = useState<"live" | "sample" | null>(null);
+  const [roundtableResult, setRoundtableResult] = useState<RoundtableResult | null>(null);
   const [error, setError] = useState("");
+  const [isRunningQuick, setIsRunningQuick] = useState(false);
   const [isPreparing, setIsPreparing] = useState(false);
-  const [isRunning, setIsRunning] = useState(false);
-  const [resultSource, setResultSource] = useState<"live" | "sample" | null>(null);
+  const [isRunningRoundtable, setIsRunningRoundtable] = useState(false);
 
-  function resetDownstream() {
+  function resetAllResults() {
     setAgenda(null);
-    setResult(null);
-    setResultSource(null);
+    setQuickResult(null);
+    setQuickResultSource(null);
+    setRoundtableResult(null);
     setError("");
   }
 
   function chooseExample(example: string) {
     setIdea(example);
-    resetDownstream();
+    setGoal("");
+    setConstraintsText("");
+    resetAllResults();
   }
 
   function choosePanel(nextPanel: PanelMode) {
     setPanelMode(nextPanel);
-    resetDownstream();
+    setAgenda(null);
+    setRoundtableResult(null);
+    setError("");
   }
 
   function viewSampleBrief() {
     setIdea(demoIdea);
-    setPanelMode(demoResult.panelMode);
+    setGoal("Decide whether this should become a product or remain a personal tool.");
+    setConstraintsText("Reduce screen time\nDo not compromise application-tracker accuracy");
     setAgenda(null);
-    setResult(demoResult);
-    setResultSource("sample");
+    setRoundtableResult(null);
+    setQuickResult(demoQuickResult);
+    setQuickResultSource("sample");
     setError("");
   }
 
-  async function prepareAgenda(event: FormEvent<HTMLFormElement>) {
+  async function generateQuickBrief(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError("");
-    setResult(null);
-    setResultSource(null);
+    setAgenda(null);
+    setRoundtableResult(null);
+    setQuickResult(null);
+    setQuickResultSource(null);
+    setIsRunningQuick(true);
+
+    try {
+      const response = await fetch("/api/brief", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          idea,
+          goal: goal.trim() || undefined,
+          constraints: constraintsFromText(constraintsText)
+        })
+      });
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "The Quick Brief could not be completed.");
+      }
+
+      setQuickResult(data as QuickBriefDisplayResult);
+      setQuickResultSource("live");
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : "Unexpected error.");
+    } finally {
+      setIsRunningQuick(false);
+    }
+  }
+
+  async function prepareFullAgenda() {
+    setError("");
+    setAgenda(null);
+    setRoundtableResult(null);
     setIsPreparing(true);
 
     try {
@@ -103,7 +157,7 @@ export default function Home() {
       const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(data.error || "The agenda could not be prepared.");
+        throw new Error(data.error || "The Full Roundtable agenda could not be prepared.");
       }
 
       setIdea(data.idea);
@@ -116,16 +170,14 @@ export default function Home() {
   }
 
   function updateTopic(index: number, value: string) {
-    setResult(null);
-    setResultSource(null);
+    setRoundtableResult(null);
     setAgenda((current) =>
       current?.map((topic, topicIndex) => (topicIndex === index ? value : topic)) ?? null
     );
   }
 
   function removeTopic(index: number) {
-    setResult(null);
-    setResultSource(null);
+    setRoundtableResult(null);
     setAgenda((current) => {
       if (!current || current.length <= 3) return current;
       return current.filter((_, topicIndex) => topicIndex !== index);
@@ -133,8 +185,7 @@ export default function Home() {
   }
 
   function addTopic() {
-    setResult(null);
-    setResultSource(null);
+    setRoundtableResult(null);
     setAgenda((current) => {
       if (!current || current.length >= 5) return current;
       return [...current, ""];
@@ -145,8 +196,8 @@ export default function Home() {
     if (!agenda) return;
 
     setError("");
-    setResult(null);
-    setIsRunning(true);
+    setRoundtableResult(null);
+    setIsRunningRoundtable(true);
 
     try {
       const response = await fetch("/api/roundtable", {
@@ -157,15 +208,14 @@ export default function Home() {
       const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(data.error || "The roundtable could not finish.");
+        throw new Error(data.error || "The Full Roundtable could not finish.");
       }
 
-      setResult(data as RoundtableResult);
-      setResultSource("live");
+      setRoundtableResult(data as RoundtableResult);
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : "Unexpected error.");
     } finally {
-      setIsRunning(false);
+      setIsRunningRoundtable(false);
     }
   }
 
@@ -177,35 +227,38 @@ export default function Home() {
       (topic) =>
         topic.trim().length > 0 && topic.trim().length <= TOPIC_MAX_CHARACTERS
     );
+  const ideaIsValid =
+    idea.trim().length >= IDEA_MIN_CHARACTERS &&
+    idea.trim().length <= IDEA_MAX_CHARACTERS;
+  const isBusy = isRunningQuick || isPreparing || isRunningRoundtable;
 
   return (
     <main className="shell">
       <section className="hero">
-        <p className="eyebrow">Human-approved multi-agent deliberation</p>
+        <p className="eyebrow">Evidence-aware pre-build decisions</p>
         <h1>AI Roundtable</h1>
         <p className="subtitle">
-          Turn one idea into a structured debate, then approve what the council should examine
-          before the agents begin.
+          Describe an idea once. Get a concise verdict, MVP recommendation, technical
+          direction, and seven-day validation plan before committing to a build.
         </p>
       </section>
 
       {publicDemoOnly ? (
         <section className="inputPanel publicDemoPanel" aria-labelledby="public-demo-title">
           <div className="stepLabel">Public portfolio demo</div>
-          <h2 id="public-demo-title">Explore a voice-first internship tracking decision</h2>
+          <h2 id="public-demo-title">Review a sample pre-build decision</h2>
           <p>
-            This deployment uses a pre-generated result so reviewers can inspect the complete
-            workflow without consuming model credits. Live multi-agent execution is disabled to
-            protect credentials and prevent unbounded API spend.
+            This deployment is sample-only. It uses a pre-generated Quick Brief so the full
+            product experience can be inspected without credentials, model calls, or API spend.
           </p>
           <div className="sampleIdeaPreview">
             <span>Sample idea</span>
             <p>{demoIdea}</p>
           </div>
           <ul>
-            <li>Human-approved agenda and five specialist perspectives</li>
-            <li>Complete 15-turn discussion with preserved disagreements</li>
-            <li>Decision brief and privacy-safe run diagnostics</li>
+            <li>An honest verdict that can recommend validation before implementation</li>
+            <li>Explicit evidence boundaries instead of invented competitor claims</li>
+            <li>A narrow MVP, technical direction, and measurable seven-day plan</li>
           </ul>
           <div className="actionRow publicDemoActions">
             <a
@@ -217,87 +270,156 @@ export default function Home() {
               View source and evaluation
             </a>
             <button className="primaryButton" type="button" onClick={viewSampleBrief}>
-              Review this sample idea
+              Review sample Quick Brief
             </button>
           </div>
         </section>
       ) : (
-      <form className="inputPanel" onSubmit={prepareAgenda}>
-        <div className="stepLabel">Step 1</div>
-        <h2>Frame the decision</h2>
+        <form className="inputPanel" onSubmit={generateQuickBrief}>
+          <div className="stepLabel">Quick Brief · default</div>
+          <h2>Frame the idea once</h2>
 
-        <fieldset className="panelPicker">
-          <legend>Choose an advisory panel</legend>
-          <div className="panelOptions">
-            {panelOptions.map((option) => (
-              <button
-                className={`panelOption ${panelMode === option.value ? "selected" : ""}`}
-                key={option.value}
-                type="button"
-                onClick={() => choosePanel(option.value)}
-                aria-pressed={panelMode === option.value}
-              >
-                <strong>{option.title}</strong>
-                <span>{option.description}</span>
+          <label htmlFor="idea">Product idea</label>
+          <textarea
+            id="idea"
+            value={idea}
+            onChange={(event) => {
+              setIdea(event.target.value.slice(0, IDEA_MAX_CHARACTERS));
+              resetAllResults();
+            }}
+            placeholder="Describe the idea, who it is for, the problem, and what is still uncertain..."
+            rows={7}
+            maxLength={IDEA_MAX_CHARACTERS}
+          />
+          <div className="characterCount" aria-live="polite">
+            <span>Maximum {IDEA_MAX_CHARACTERS.toLocaleString("en-US")} characters</span>
+            <span>
+              {idea.length.toLocaleString("en-US")} /{" "}
+              {IDEA_MAX_CHARACTERS.toLocaleString("en-US")}
+            </span>
+          </div>
+
+          <div className="contextFields">
+            <div>
+              <label htmlFor="goal">Decision goal <span>(optional)</span></label>
+              <input
+                id="goal"
+                value={goal}
+                maxLength={1000}
+                onChange={(event) => {
+                  setGoal(event.target.value);
+                  resetAllResults();
+                }}
+                placeholder="Example: Decide whether to build, validate, or drop it."
+              />
+            </div>
+            <div>
+              <label htmlFor="constraints">Constraints <span>(optional, one per line)</span></label>
+              <textarea
+                className="compactTextarea"
+                id="constraints"
+                value={constraintsText}
+                maxLength={1500}
+                rows={3}
+                onChange={(event) => {
+                  setConstraintsText(event.target.value);
+                  resetAllResults();
+                }}
+                placeholder="One week to prototype&#10;Must work on mobile"
+              />
+            </div>
+          </div>
+
+          <div className="exampleRow" aria-label="Example ideas">
+            {examples.map((example) => (
+              <button key={example} type="button" onClick={() => chooseExample(example)}>
+                {example}
               </button>
             ))}
           </div>
-        </fieldset>
 
-        <label htmlFor="idea">Idea or decision</label>
-        <textarea
-          id="idea"
-          value={idea}
-          onChange={(event) => {
-            setIdea(event.target.value.slice(0, IDEA_MAX_CHARACTERS));
-            resetDownstream();
-          }}
-          placeholder="Describe what you are considering, who it is for, and what is still uncertain..."
-          rows={7}
-          maxLength={IDEA_MAX_CHARACTERS}
-        />
-        <div className="characterCount" aria-live="polite">
-          <span>Maximum {IDEA_MAX_CHARACTERS.toLocaleString("en-US")} characters</span>
-          <span>
-            {idea.length.toLocaleString("en-US")} / {IDEA_MAX_CHARACTERS.toLocaleString("en-US")}
-          </span>
-        </div>
-        <div className="exampleRow" aria-label="Example ideas">
-          {examples.map((example) => (
-            <button key={example} type="button" onClick={() => chooseExample(example)}>
-              {example}
+          <details className="advancedOptions">
+            <summary>Optional Full Roundtable settings</summary>
+            <p>
+              Full Roundtable is a slower, model-intensive legacy workflow. Use it only when
+              important disagreement may change the decision.
+            </p>
+            <fieldset className="panelPicker">
+              <legend>Advisory panel</legend>
+              <div className="panelOptions">
+                {panelOptions.map((option) => (
+                  <button
+                    className={`panelOption ${panelMode === option.value ? "selected" : ""}`}
+                    key={option.value}
+                    type="button"
+                    onClick={() => choosePanel(option.value)}
+                    aria-pressed={panelMode === option.value}
+                  >
+                    <strong>{option.title}</strong>
+                    <span>{option.description}</span>
+                  </button>
+                ))}
+              </div>
+            </fieldset>
+          </details>
+
+          <div className="actionRow">
+            <button className="secondaryButton" type="button" onClick={viewSampleBrief}>
+              View sample
             </button>
-          ))}
-        </div>
-        <div className="actionRow">
-          <button className="secondaryButton" type="button" onClick={viewSampleBrief}>
-            View sample brief
-          </button>
-          <button
-            className="primaryButton"
-            type="submit"
-            disabled={
-              isPreparing ||
-              isRunning ||
-              idea.trim().length < IDEA_MIN_CHARACTERS ||
-              idea.trim().length > IDEA_MAX_CHARACTERS
-            }
-          >
-            {isPreparing ? "Preparing agenda..." : agenda ? "Regenerate agenda" : "Prepare agenda"}
-          </button>
-        </div>
-      </form>
+            <button
+              className="secondaryButton"
+              type="button"
+              disabled={!ideaIsValid || isBusy}
+              onClick={prepareFullAgenda}
+            >
+              {isPreparing ? "Preparing Full agenda..." : "Prepare Full Roundtable"}
+            </button>
+            <button className="primaryButton" type="submit" disabled={!ideaIsValid || isBusy}>
+              {isRunningQuick ? "Creating Quick Brief..." : "Create Quick Brief"}
+            </button>
+          </div>
+        </form>
       )}
+
+      {isRunningQuick ? (
+        <section className="processPanel" aria-live="polite">
+          <div className="stepLabel">Quick Brief</div>
+          <h2>Turning the idea into a pre-build decision</h2>
+          <p>
+            The Planner is extracting assumptions and unknowns before a bounded brief writer
+            produces the verdict. External research is not run in this milestone.
+          </p>
+          <div className="processSteps quickProcessSteps">
+            <span>Frame the problem</span>
+            <span>Identify unknowns</span>
+            <span>Write and validate brief</span>
+          </div>
+        </section>
+      ) : null}
+
+      {error ? <p className="error" role="alert">{error}</p> : null}
+
+      {quickResult && quickResultSource ? (
+        <QuickBriefReport
+          result={quickResult}
+          idea={idea}
+          source={quickResultSource}
+          onPrepareFull={
+            publicDemoOnly || isBusy || !ideaIsValid ? undefined : prepareFullAgenda
+          }
+        />
+      ) : null}
 
       {agenda ? (
         <section className="agendaPanel" aria-labelledby="agenda-title">
           <div className="agendaHeader">
             <div>
-              <div className="stepLabel">Step 2</div>
-              <h2 id="agenda-title">Review and approve the agenda</h2>
+              <div className="stepLabel">Optional deep analysis</div>
+              <h2 id="agenda-title">Review the Full Roundtable agenda</h2>
               <p>
-                The agents will only discuss the topics you approve. Edit the wording, remove a
-                low-value topic, or add one before starting the model-intensive workflow.
+                This starts the fixed five-agent, three-round baseline. Edit the scope before
+                approving the model-intensive workflow.
               </p>
             </div>
             <span className="panelBadge">{panelName(panelMode)}</span>
@@ -339,21 +461,21 @@ export default function Home() {
               className="primaryButton"
               type="button"
               onClick={conveneRoundtable}
-              disabled={!agendaIsValid || isRunning}
+              disabled={!agendaIsValid || isRunningRoundtable}
             >
-              {isRunning ? "Council in session..." : "Approve and convene"}
+              {isRunningRoundtable ? "Council in session..." : "Approve and convene"}
             </button>
           </div>
         </section>
       ) : null}
 
-      {isRunning ? (
+      {isRunningRoundtable ? (
         <section className="processPanel" aria-live="polite">
-          <div className="stepLabel">Step 3</div>
-          <h2>The council is working through your approved agenda</h2>
+          <div className="stepLabel">Full Roundtable</div>
+          <h2>The fixed baseline is running</h2>
           <p>
-            Five specialist agents complete three rounds of deliberation before the moderator
-            produces the decision brief. Keep this page open while the workflow runs.
+            Five specialist agents complete three sequential rounds before moderator synthesis.
+            Keep this page open while the workflow runs.
           </p>
           <div className="processSteps">
             <span>Initial positions</span>
@@ -364,20 +486,15 @@ export default function Home() {
         </section>
       ) : null}
 
-      {error ? <p className="error" role="alert">{error}</p> : null}
-
-      {result ? (
-        <section className="results">
+      {roundtableResult ? (
+        <section className="results" aria-label="Full Roundtable result">
           <div className="meetingContext">
-            {resultSource === "sample" ? <span>Illustrative sample · no model call</span> : null}
-            <span>{panelName(result.panelMode)}</span>
-            <span>{result.agenda.length} approved topics</span>
-            <span>{result.transcript.length} agent turns</span>
-            {result.diagnostics ? (
-              <span>{result.diagnostics.modelCallCount} observed model calls</span>
-            ) : null}
-            {result.diagnostics?.retryCount ? (
-              <span>{result.diagnostics.retryCount} retries</span>
+            <span>Full Roundtable · fixed baseline</span>
+            <span>{panelName(roundtableResult.panelMode)}</span>
+            <span>{roundtableResult.agenda.length} approved topics</span>
+            <span>{roundtableResult.transcript.length} agent turns</span>
+            {roundtableResult.diagnostics ? (
+              <span>{roundtableResult.diagnostics.modelCallCount} observed call attempts</span>
             ) : null}
           </div>
           <section className="ideaContext" aria-label="Idea under review">
@@ -385,29 +502,35 @@ export default function Home() {
             <p>{idea}</p>
           </section>
           <section className="summaryHero">
-            <span>Executive Summary</span>
-            <p>{result.summary.executiveSummary}</p>
+            <span>Moderator Summary</span>
+            <p>{roundtableResult.summary.executiveSummary}</p>
           </section>
 
           <div className="summaryGrid">
-            <SummaryList title="Consensus" items={result.summary.consensus} />
-            <SummaryList title="Key Disagreements" items={result.summary.disagreements} />
-            <SummaryList title="Biggest Risks" items={result.summary.risks} />
+            <SummaryList title="Consensus" items={roundtableResult.summary.consensus} />
+            <SummaryList
+              title="Key Disagreements"
+              items={roundtableResult.summary.disagreements}
+            />
+            <SummaryList title="Biggest Risks" items={roundtableResult.summary.risks} />
             <section className="card">
               <h3>Recommended Next Step</h3>
-              <p>{result.summary.recommendedNextStep}</p>
+              <p>{roundtableResult.summary.recommendedNextStep}</p>
             </section>
             <section className="card questionCard">
               <h3>One Follow-up Question</h3>
-              <p>{result.summary.followUpQuestion}</p>
+              <p>{roundtableResult.summary.followUpQuestion}</p>
             </section>
           </div>
 
           <details className="transcript">
             <summary>Show Internal Debate</summary>
             <div className="transcriptList">
-              {result.transcript.map((entry, index) => (
-                <article key={`${entry.round}-${entry.agentName}-${index}`} className="transcriptEntry">
+              {roundtableResult.transcript.map((entry, index) => (
+                <article
+                  key={`${entry.round}-${entry.agentName}-${index}`}
+                  className="transcriptEntry"
+                >
                   <div>
                     <span>Round {entry.round}</span>
                     <strong>{entry.agentName}</strong>
@@ -418,32 +541,35 @@ export default function Home() {
             </div>
           </details>
 
-          {result.diagnostics ? (
+          {roundtableResult.diagnostics ? (
             <details className="diagnostics">
               <summary>Show Run Diagnostics</summary>
               <dl>
                 <div>
                   <dt>Run ID</dt>
-                  <dd>{result.diagnostics.runId}</dd>
+                  <dd>{roundtableResult.diagnostics.runId}</dd>
                 </div>
                 <div>
                   <dt>Duration</dt>
-                  <dd>{(result.diagnostics.durationMs / 1000).toFixed(1)} seconds</dd>
+                  <dd>{(roundtableResult.diagnostics.durationMs / 1000).toFixed(1)} seconds</dd>
                 </div>
                 <div>
-                  <dt>Model calls</dt>
+                  <dt>Call attempts</dt>
                   <dd>
-                    {result.diagnostics.successfulModelCalls} succeeded · {result.diagnostics.failedModelCalls} failed · {result.diagnostics.retryCount} retries
+                    {roundtableResult.diagnostics.successfulModelCalls} succeeded ·{" "}
+                    {roundtableResult.diagnostics.failedModelCalls} failed ·{" "}
+                    {roundtableResult.diagnostics.retryCount} retries
                   </dd>
                 </div>
                 <div>
                   <dt>Model</dt>
-                  <dd>{result.diagnostics.models.join(", ") || "Unavailable"}</dd>
+                  <dd>{roundtableResult.diagnostics.models.join(", ") || "Unavailable"}</dd>
                 </div>
                 <div>
                   <dt>Tokens</dt>
                   <dd>
-                    {result.diagnostics.inputTokens ?? "Unavailable"} input · {result.diagnostics.outputTokens ?? "Unavailable"} output
+                    {roundtableResult.diagnostics.inputTokens ?? "Unavailable"} input ·{" "}
+                    {roundtableResult.diagnostics.outputTokens ?? "Unavailable"} output
                   </dd>
                 </div>
               </dl>

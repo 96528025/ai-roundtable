@@ -2,11 +2,13 @@ import { NextResponse } from "next/server";
 import { runRoundtable } from "@/lib/debate";
 import { saveMeeting } from "@/lib/history";
 import { invalidRequest, toPublicError } from "@/lib/errors";
+import { assertLiveExecutionEnabled } from "@/lib/v2/validation";
 
 export const runtime = "nodejs";
 
 export async function POST(request: Request) {
   try {
+    assertLiveExecutionEnabled();
     let body: {
       idea?: unknown;
       topics?: unknown;

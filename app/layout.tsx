@@ -3,7 +3,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "AI Roundtable",
-  description: "Let your personal advisory board debate your idea."
+  description: "Turn one product idea into an evidence-aware pre-build decision."
 };
 
 export default function RootLayout({

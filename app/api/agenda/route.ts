@@ -6,11 +6,13 @@ import {
 } from "@/lib/debate";
 import { createRunObserver } from "@/lib/observability";
 import { invalidRequest, toPublicError } from "@/lib/errors";
+import { assertLiveExecutionEnabled } from "@/lib/v2/validation";
 
 export async function POST(request: Request) {
   const observer = createRunObserver("agenda");
 
   try {
+    assertLiveExecutionEnabled();
     let body: {
       idea?: unknown;
       panelMode?: unknown;
