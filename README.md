@@ -202,7 +202,9 @@ HTTP status codes preserve the failure boundary:
 | Upstream authentication, request, network, or 5xx failure | `502` |
 | Unexpected internal failure | `500` |
 
-Transient connection errors, `429`, `500–599`, and Anthropic `529` responses are retried up to two times by default. Retries use bounded exponential backoff with jitter and honor `retry-after` when Anthropic supplies it. Authentication, validation, empty-response, and malformed-report failures are not retried.
+Transient connection errors, `429`, `500–599`, and Anthropic `529` responses are retried up to two times by default. Retries use bounded exponential backoff with jitter and honor `retry-after` when Anthropic supplies it. Authentication, validation, and empty-response failures are not retried.
+
+Malformed-report failures are handled separately at the moderator synthesis step, because that call runs last: discarding it also discards fifteen completed persona turns. When the report cannot be parsed, the orchestrator resamples the same request up to two additional times (`moderator_synthesis.resample_1`, `resample_2`) before failing the workflow. The resample is deliberately identical — same messages, same temperature — so a recovered run stays a fair sample rather than a differently prompted one. See [docs/2026-08-04-moderator-truncation.md](docs/2026-08-04-moderator-truncation.md) for the measured failure rate that motivated this.
 
 ## Observability and Privacy
 
@@ -214,6 +216,7 @@ Every agenda or roundtable workflow receives a unique run ID. Each model call em
 - duration in milliseconds
 - resolved model name
 - input and output token counts when provided by Anthropic
+- the Anthropic stop reason, which distinguishes a complete response from one cut off at the token ceiling
 - coarse error category such as configuration, timeout, network, authentication, rate limit, upstream, or empty response
 
 The logs intentionally exclude the user's idea, system prompt, messages, model output, and transcript. Successful roundtable responses include aggregate diagnostics so the UI and API consumer can inspect latency and usage without accessing server logs.
@@ -277,6 +280,7 @@ The evaluator uses explicit, reviewable thresholds rather than claiming to measu
 app/page.tsx                        Human-approved workflow, sample, report, and diagnostics UI
 app/api/agenda/route.ts             Agenda generation and fallback boundary
 app/api/roundtable/route.ts         Validated orchestration and best-effort persistence boundary
+docs/                               Dated incident and design records
 evals/cases.ts                      Five fixed live evaluation scenarios
 evals/roundtable.eval.test.ts       Opt-in model quality regression suite
 lib/agents.ts                       Panel-specific persona definitions
