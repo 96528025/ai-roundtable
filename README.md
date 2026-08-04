@@ -93,6 +93,16 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000). Select **View sample brief** to inspect the complete interface without configuring an API key. The sample is explicitly labeled as illustrative and is not presented as a live model result.
 
+### Safe public portfolio mode
+
+For a public deployment, set the non-secret environment variable below and leave `ANTHROPIC_API_KEY` unset:
+
+```bash
+NEXT_PUBLIC_DEMO_MODE=sample
+```
+
+This mode replaces the live-input form with an explicit portfolio-demo panel. Reviewers can inspect the complete pre-generated decision brief, 15-turn transcript, and illustrative diagnostics without triggering an API route or consuming model credits. Local development remains fully interactive when the variable is absent. `.vercelignore` explicitly excludes all `.env*` files as an additional safeguard against uploading local credentials.
+
 ## API
 
 ### `POST /api/agenda`

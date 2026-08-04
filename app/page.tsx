@@ -15,6 +15,8 @@ const examples = [
   "A browser extension that turns messy shopping tabs into a single decision brief."
 ];
 
+const publicDemoOnly = process.env.NEXT_PUBLIC_DEMO_MODE === "sample";
+
 const panelOptions: Array<{
   value: PanelMode;
   title: string;
@@ -187,6 +189,35 @@ export default function Home() {
         </p>
       </section>
 
+      {publicDemoOnly ? (
+        <section className="inputPanel publicDemoPanel" aria-labelledby="public-demo-title">
+          <div className="stepLabel">Public portfolio demo</div>
+          <h2 id="public-demo-title">Explore a complete decision brief instantly</h2>
+          <p>
+            This deployment uses a pre-generated result so reviewers can inspect the complete
+            workflow without consuming model credits. Live multi-agent execution is disabled to
+            protect credentials and prevent unbounded API spend.
+          </p>
+          <ul>
+            <li>Human-approved agenda and five specialist perspectives</li>
+            <li>Complete 15-turn discussion with preserved disagreements</li>
+            <li>Decision brief and privacy-safe run diagnostics</li>
+          </ul>
+          <div className="actionRow publicDemoActions">
+            <a
+              className="secondaryButton demoLinkButton"
+              href="https://github.com/96528025/ai-roundtable"
+              target="_blank"
+              rel="noreferrer"
+            >
+              View source and evaluation
+            </a>
+            <button className="primaryButton" type="button" onClick={viewSampleBrief}>
+              Explore sample brief
+            </button>
+          </div>
+        </section>
+      ) : (
       <form className="inputPanel" onSubmit={prepareAgenda}>
         <div className="stepLabel">Step 1</div>
         <h2>Frame the decision</h2>
@@ -252,6 +283,7 @@ export default function Home() {
           </button>
         </div>
       </form>
+      )}
 
       {agenda ? (
         <section className="agendaPanel" aria-labelledby="agenda-title">
