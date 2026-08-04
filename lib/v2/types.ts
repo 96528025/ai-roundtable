@@ -177,6 +177,9 @@ export type BudgetUsage = {
 
 export type QuickBriefResult = {
   frame: IdeaFrame;
+  planning: {
+    status: "model" | "fallback";
+  };
   route: RouteDecision;
   brief: IdeaBrief;
   budget: BudgetUsage;

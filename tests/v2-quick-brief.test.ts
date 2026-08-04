@@ -46,6 +46,7 @@ describe("Planned Quick Brief", () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(result.frame).toEqual(ideaFrameFixture);
+    expect(result.planning.status).toBe("model");
     expect(result.brief).toEqual(ideaBriefFixture);
     expect(result.diagnostics).toMatchObject({
       modelCallCount: 2,
@@ -57,7 +58,7 @@ describe("Planned Quick Brief", () => {
       maxCallAttempts: 4,
       usedCallAttempts: 2,
       retryAttempts: 0,
-      requestedOutputTokens: 2600
+      requestedOutputTokens: 4200
     });
   });
 
@@ -94,6 +95,23 @@ describe("Planned Quick Brief", () => {
     expect(result.budget.usedCallAttempts).toBe(3);
   });
 
+  it("falls back to a conservative frame when both planner responses are malformed", async () => {
+    vi.stubEnv("ANTHROPIC_API_KEY", "test-key");
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(reply("{ incomplete planner"))
+      .mockResolvedValueOnce(reply("{ still incomplete"))
+      .mockResolvedValueOnce(reply(ideaBriefFixture));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await runQuickBrief(request);
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(result.planning.status).toBe("fallback");
+    expect(result.frame.routingSignals.ambiguity).toBe("high");
+    expect(result.brief).toEqual(ideaBriefFixture);
+  });
+
   it("counts a transport retry against the shared attempt budget", async () => {
     vi.stubEnv("ANTHROPIC_API_KEY", "test-key");
     const fetchMock = vi
@@ -117,7 +135,7 @@ describe("Planned Quick Brief", () => {
     expect(result.budget).toMatchObject({
       usedCallAttempts: 3,
       retryAttempts: 1,
-      requestedOutputTokens: 3200
+      requestedOutputTokens: 5400
     });
   });
 

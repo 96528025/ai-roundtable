@@ -39,6 +39,9 @@ export const demoQuickResult: QuickBriefDisplayResult = {
       deliberationValue: "high"
     }
   },
+  planning: {
+    status: "model"
+  },
   route: {
     selectedPath: "quick",
     fullRoundtableRecommended: true,

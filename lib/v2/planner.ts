@@ -3,7 +3,7 @@ import type { ModelBudget } from "@/lib/v2/budget";
 import type { IdeaFrame, IdeaRequest, RouteDecision, RouteReason } from "@/lib/v2/types";
 import { parseIdeaFrame } from "@/lib/v2/validation";
 
-const PLANNER_MAX_TOKENS = 600;
+export const PLANNER_MAX_TOKENS = 1_200;
 
 export async function planIdea(
   request: IdeaRequest,
@@ -49,7 +49,9 @@ Return only JSON with this exact shape:
 Extract the decision structure without giving a final verdict.
 Do not claim that current products, repositories, markets, users, prices, or regulations exist.
 When the user did not provide a fact, label it as an assumption or unknown.
-Keep assumptions and unknowns decision-relevant and concise.
+Write every text value in English, even when the user writes in another language.
+Keep every text value to one short sentence, use 2-4 assumptions and 2-4 unknowns,
+and keep the complete JSON response under 700 words.
 Return valid JSON only.`;
   let raw = await budget.call(
     [...messages],
@@ -81,6 +83,43 @@ Return valid JSON only.`;
     });
     return parseIdeaFrame(raw);
   }
+}
+
+export function fallbackIdeaFrame(request: IdeaRequest): IdeaFrame {
+  return {
+    summary: request.idea.slice(0, 700),
+    targetUser: "The target user is not yet specific enough in the submitted idea.",
+    problem:
+      "The underlying user problem and its frequency still need direct validation.",
+    desiredOutcome:
+      request.goal || "Decide whether this idea deserves validation or implementation.",
+    currentWorkaround: "The current workaround was not specified by the user.",
+    assumptions: [
+      "A reachable user segment experiences this problem repeatedly.",
+      "The proposed workflow would improve on the user's current workaround."
+    ],
+    unknowns: [
+      {
+        question: "Who experiences this problem most often and how do they solve it today?",
+        impact: "high",
+        answerableBy: "user",
+        mayChangeVerdict: true
+      },
+      {
+        question: "Which existing products or repositories already address this workflow?",
+        impact: "high",
+        answerableBy: "research",
+        mayChangeVerdict: true
+      }
+    ],
+    riskSignals: ["high_ambiguity"],
+    routingSignals: {
+      researchNeed: "high",
+      ambiguity: "high",
+      buildComplexity: "medium",
+      deliberationValue: "medium"
+    }
+  };
 }
 
 export function routeIdea(frame: IdeaFrame): RouteDecision {

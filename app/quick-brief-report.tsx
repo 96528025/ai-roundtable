@@ -41,6 +41,9 @@ export function QuickBriefReport({
         <span>Quick Brief</span>
         <span>{brief.evidence.status.replaceAll("_", " ")}</span>
         <span>{brief.verdict.confidence} confidence</span>
+        {result.planning.status === "fallback" ? (
+          <span>planner fallback used</span>
+        ) : null}
         {result.diagnostics ? (
           <span>{result.diagnostics.modelCallCount} observed call attempts</span>
         ) : null}
