@@ -69,6 +69,7 @@ h1 {
 .inputPanel,
 .agendaPanel,
 .processPanel,
+.ideaContext,
 .summaryHero,
 .card,
 .transcript,
@@ -88,6 +89,32 @@ h1 {
   margin: 0;
   color: var(--muted);
   line-height: 1.55;
+}
+
+.sampleIdeaPreview {
+  margin-top: 18px;
+  border-left: 4px solid var(--accent);
+  border-radius: 6px;
+  background: #fffdfa;
+  padding: 16px 18px;
+}
+
+.sampleIdeaPreview span,
+.ideaContext span {
+  color: var(--accent);
+  font-size: 0.76rem;
+  font-weight: 850;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.sampleIdeaPreview p,
+.ideaContext p {
+  max-width: 920px;
+  margin: 8px 0 0;
+  color: var(--ink);
+  font-size: 1.05rem;
+  line-height: 1.5;
 }
 
 .publicDemoPanel > ul {
@@ -408,6 +435,12 @@ input:focus {
   flex-wrap: wrap;
   gap: 8px;
   margin-bottom: 12px;
+}
+
+.ideaContext {
+  margin-bottom: 16px;
+  padding: 22px;
+  background: #fffdfa;
 }
 
 .summaryHero {

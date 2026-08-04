@@ -10,7 +10,7 @@ import {
 import type { PanelMode, RoundtableResult } from "@/types";
 
 const examples = [
-  "An AI workspace that helps independent consultants turn client calls into scoped proposals and follow-up tasks.",
+  demoIdea,
   "A marketplace where local chefs sell weekly meal subscriptions to nearby families.",
   "A browser extension that turns messy shopping tabs into a single decision brief."
 ];
@@ -192,12 +192,16 @@ export default function Home() {
       {publicDemoOnly ? (
         <section className="inputPanel publicDemoPanel" aria-labelledby="public-demo-title">
           <div className="stepLabel">Public portfolio demo</div>
-          <h2 id="public-demo-title">Explore a complete decision brief instantly</h2>
+          <h2 id="public-demo-title">Explore a voice-first internship tracking decision</h2>
           <p>
             This deployment uses a pre-generated result so reviewers can inspect the complete
             workflow without consuming model credits. Live multi-agent execution is disabled to
             protect credentials and prevent unbounded API spend.
           </p>
+          <div className="sampleIdeaPreview">
+            <span>Sample idea</span>
+            <p>{demoIdea}</p>
+          </div>
           <ul>
             <li>Human-approved agenda and five specialist perspectives</li>
             <li>Complete 15-turn discussion with preserved disagreements</li>
@@ -213,7 +217,7 @@ export default function Home() {
               View source and evaluation
             </a>
             <button className="primaryButton" type="button" onClick={viewSampleBrief}>
-              Explore sample brief
+              Review this sample idea
             </button>
           </div>
         </section>
@@ -376,6 +380,10 @@ export default function Home() {
               <span>{result.diagnostics.retryCount} retries</span>
             ) : null}
           </div>
+          <section className="ideaContext" aria-label="Idea under review">
+            <span>Idea under review</span>
+            <p>{idea}</p>
+          </section>
           <section className="summaryHero">
             <span>Executive Summary</span>
             <p>{result.summary.executiveSummary}</p>

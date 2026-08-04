@@ -1,129 +1,129 @@
 import type { RoundtableResult } from "@/types";
 
 export const demoIdea =
-  "An AI workspace that helps independent consultants turn client calls into scoped proposals and follow-up tasks.";
+  "I spend too many hours staring at screens while tracking internship applications, and the eye strain is getting worse. I want a voice-first assistant that lets me review and update my daily application status and decide what to do next by speaking.";
 
 export const demoResult: RoundtableResult = {
   panelMode: "startup",
   agenda: [
-    "Customer urgency and current workaround",
-    "Trust in generated scope",
-    "Smallest useful workflow",
-    "Adoption and distribution",
-    "Validation evidence"
+    "User pain and current application-tracking workflow",
+    "Voice interaction and daily check-in experience",
+    "Application data accuracy and confirmation",
+    "Privacy, accessibility, and usage context",
+    "Smallest testable MVP and validation signals"
   ],
   summary: {
     executiveSummary:
-      "The concept targets a costly handoff between client conversations and approved work, but the strongest wedge is not generic meeting notes. It is a reviewable call-to-scope workflow for consultants who repeatedly lose time clarifying deliverables. Validate that narrow promise before adding project management or CRM features.",
+      "The strongest MVP is not an autonomous job-search agent or a voice-only replacement for every screen. It is a five-minute voice check-in that reads the current application pipeline, lets the user record status changes hands-free, asks for confirmation before writing them, and ends with a short next-action plan. Validate whether this reduces screen time without increasing tracking errors before adding job discovery, email integrations, or auto-apply.",
     consensus: [
-      "The initial user should be an independent consultant with repeated discovery-to-proposal work.",
-      "Human review must remain visible because an incorrect scope can damage client trust.",
-      "The MVP should stop at an approval-ready scope and follow-up draft rather than becoming a full operating system."
+      "The initial user should be a frequent internship applicant with screen fatigue who already maintains an application tracker.",
+      "A structured tracker should remain the source of truth; voice should provide a hands-free way to review, update, and plan.",
+      "Every change to a company, role, status, or deadline should be read back and explicitly confirmed before it is saved."
     ],
     disagreements: [
-      "The Product Lead favors a document-first prototype, while the GTM Operator believes a CRM integration may be necessary to earn repeated use.",
-      "The Financial Skeptic questions willingness to pay until time saved and revision reduction are measured."
+      "The Product Lead favors a voice-first workflow with compact visual confirmation, while the Customer Strategist wants to test how much of the experience users truly expect to complete without looking at a screen.",
+      "The GTM Operator sees email and calendar integrations as a retention driver, while the Operations & Risk Lead would defer them until the core update flow is accurate and trusted."
     ],
     risks: [
-      "A polished summary can appear useful while missing commitments that materially change price or timeline.",
-      "Consultants may resist sending sensitive client conversations to a new tool.",
-      "Broad integrations could delay validation of the core call-to-scope promise."
+      "Speech transcription could attach an update to the wrong company, role, status, or deadline.",
+      "Voice interaction may be impractical in shared spaces and should not become the only accessible way to use the product.",
+      "Application history contains personal job-search data and requires clear retention, export, and deletion controls."
     ],
     recommendedNextStep:
-      "Within 2 weeks, interview 8 independent consultants and run a concierge test on 5 completed discovery calls; measure editing time, missed commitments, and whether at least 3 participants request a second use.",
+      "Within 2 weeks, run a concierge prototype with 6 internship seekers for 5 consecutive days; conduct one five-minute voice check-in per day and measure screen minutes avoided, correction rate for status updates, and how many participants return on at least 4 of 5 days.",
     followUpQuestion:
-      "Which consulting specialty has the most frequent and expensive scope revisions after discovery calls?"
+      "Which daily task creates the most avoidable screen time today: finding roles, recording applications, reviewing deadlines, or planning follow-ups?"
   },
   transcript: [
     {
       round: 1,
       agentName: "Customer Strategist",
       content:
-        "The pain is credible when consultants repeatedly translate calls into scope, but frequency matters more than enthusiasm. I would target specialists who write several proposals each month and currently replay recordings or copy notes by hand."
+        "The screen-fatigue problem is credible, but we should identify which daily job-search task causes it and how often it occurs. I would start with applicants who already maintain a spreadsheet or Notion tracker and review it every day."
     },
     {
       round: 1,
       agentName: "Product Lead",
       content:
-        "The MVP should transform one call into a reviewable scope: objectives, deliverables, exclusions, assumptions, and next actions. A visible approval step is essential because silent automation would create false confidence around client commitments."
+        "The MVP should be a short voice check-in: read today's pipeline, capture status changes, surface deadlines, and end with three next actions. Each proposed update needs a read-back confirmation before it changes the tracker."
     },
     {
       round: 1,
       agentName: "GTM Operator",
       content:
-        "Start with consultant communities and proposal coaches, where the workflow can be demonstrated using a before-and-after example. The first activation event is not uploading a call; it is approving a useful scope draft."
+        "Start with active internship seekers in university career clubs and online accountability groups. The first aha moment is completing a useful daily review hands-free, not importing every historical application or discovering new jobs."
     },
     {
       round: 1,
       agentName: "Operations & Risk Lead",
       content:
-        "Client recordings can contain confidential commercial information. The product needs clear retention controls, deletion behavior, and an explanation of where model processing occurs before users will trust it with real calls."
+        "Speech recognition can confuse company names, job titles, and dates, while application histories contain personal information. The workflow needs explicit confirmation, correction, retention, and deletion controls from the first prototype."
     },
     {
       round: 1,
       agentName: "Financial Skeptic",
       content:
-        "Time saved is not automatically willingness to pay. The business case needs evidence that faster drafting either increases proposal volume, shortens the sales cycle, or reduces costly scope revisions after a project begins."
+        "This may be a pleasant convenience rather than a durable product. The test should measure repeated use, screen minutes avoided, and correction rates before the team invests in email integrations, job discovery, or automatic applications."
     },
     {
       round: 2,
       agentName: "Customer Strategist",
       content:
-        "I agree with Financial Skeptic that generic time savings are weak. Interviews should uncover the last scope mistake, its consequence, and the current prevention ritual; those stories will reveal whether this is urgent or merely convenient."
+        "Financial Skeptic is right that claimed time savings are not enough. Interviews should reconstruct yesterday's tracking routine and identify the exact moments when users wished they could review or record an update without opening another screen."
     },
     {
       round: 2,
       agentName: "Product Lead",
       content:
-        "GTM Operator is right that approval is the activation event, but I would defer CRM integration. A document export and explicit evidence links back to the transcript are enough to test whether consultants trust the generated scope."
+        "Operations & Risk Lead is right about confirmation. I would make the assistant say, 'Move Regala AI to interview on August 8—correct?' and keep a compact visual activity log for recovery rather than pretending voice can replace every screen."
     },
     {
       round: 2,
       agentName: "GTM Operator",
       content:
-        "I agree with Product Lead on keeping the build narrow, yet the prototype should export into the user's existing proposal format. Distribution will be easier if the demo ends inside a familiar deliverable rather than another dashboard."
+        "Product Lead has the right activation event, but the prototype should work with an existing tracker instead of creating another dashboard. A guided demo using realistic applications will communicate the benefit more clearly than a broad AI-career pitch."
     },
     {
       round: 2,
       agentName: "Operations & Risk Lead",
       content:
-        "Product Lead's evidence-link proposal also reduces trust risk because every generated commitment becomes auditable. The team should test deletion and failure handling alongside happy-path output, not postpone them until deployment."
+        "GTM Operator's integration idea may improve retention later, but connecting email and calendars expands the data surface too early. First test manual or mock tracker data, ambiguous speech, corrections, and deletion alongside the happy path."
     },
     {
       round: 2,
       agentName: "Financial Skeptic",
       content:
-        "Customer Strategist proposes the right interviews, but claimed pain still needs behavioral evidence. Ask participants to submit a real completed call and compare editing time and omissions against their normal workflow."
+        "Customer Strategist proposes the right observation, but the baseline must be measurable. Compare a normal five-day tracking routine with the voice check-in and count screen minutes, missed updates, corrections, and voluntary repeat sessions."
     },
     {
       round: 3,
       agentName: "Customer Strategist",
       content:
-        "After hearing Financial Skeptic, my final recommendation is a concierge test with repeat usage as the strongest signal. Do not count compliments; count whether consultants volunteer a second call after reviewing the first scope."
+        "After hearing Financial Skeptic, my final recommendation is a five-day concierge test with return behavior as the strongest signal. Do not count compliments; count whether applicants choose the voice check-in on at least four days."
     },
     {
       round: 3,
       agentName: "Product Lead",
       content:
-        "Operations & Risk Lead changed my view on evidence visibility. Build the smallest review screen that pairs each proposed deliverable with its source passage, then measure edits before generating a final document."
+        "Operations & Risk Lead changed my view on a voice-only interface. Build the smallest hybrid flow: spoken review and updates, verbal confirmation, plus a compact activity log that users can inspect when something sounds wrong."
     },
     {
       round: 3,
       agentName: "GTM Operator",
       content:
-        "I accept Product Lead's document-first MVP. Recruit through two niche consultant communities, run live demos using anonymized calls, and follow up with a concierge offer rather than promoting a broad AI workspace."
+        "I accept Product Lead's narrow MVP. Recruit six internship seekers through campus communities, demonstrate one realistic daily check-in, and invite them into a five-day concierge pilot rather than advertising a complete job-search assistant."
     },
     {
       round: 3,
       agentName: "Operations & Risk Lead",
       content:
-        "I agree with Customer Strategist that real calls are necessary, provided participants consent and can delete them. Document the data lifecycle and test one model failure so the team can explain recovery honestly."
+        "I agree with Customer Strategist that real routines matter, provided participants can use anonymized records and delete their data. Test one wrong company name, one wrong date, and one interrupted session so recovery is explicit."
     },
     {
       round: 3,
       agentName: "Financial Skeptic",
       content:
-        "GTM Operator's narrow acquisition plan makes the test affordable. Set a two-week cap and require measurable reductions in editing time plus at least three repeat-use requests before paying for deeper integrations."
+        "GTM Operator's narrow recruiting plan makes the test affordable. Set a two-week cap and require lower screen time, an acceptable correction rate, and at least four of six participants returning on four days before deeper integrations."
     }
   ]
 };
