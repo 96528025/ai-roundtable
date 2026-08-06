@@ -261,18 +261,23 @@ Live commands are opt-in and must not be run without explicit cost approval. V2 
 
 Automated V2 scoring checks verdict calibration, evidence honesty, MVP scope, risk testability, seven-day thresholds, and follow-up impact. These are structural proxies. The harness explicitly records human decision-usefulness ratings as `not_collected` until real blinded review occurs.
 
-### Committed legacy smoke baseline
+### Committed legacy paired baseline
 
-The committed one-case result used `claude-sonnet-4-6`:
+Five cases, `claude-sonnet-4-6`, generated 2026-08-04 (`evals/results/latest.json`):
 
 | Measure | Fixed roundtable | Single-pass control | Ratio / delta |
 | --- | ---: | ---: | ---: |
 | Shared structural brief score | 100 | 100 | 0-point delta |
-| Model-call attempts | 16 | 1 | 16.0× |
-| Total tokens | 36,718 | 1,089 | 33.7× |
-| Duration | 137.5 seconds | 25.6 seconds | 5.4× |
+| Cases passing the rubric | 5 / 5 | 5 / 5 | — |
+| Model-call attempts per case | 16 | 1 | 16.0× |
+| Total tokens across five cases | 183,189 | 4,831 | 38.1× |
+| Total duration across five cases | 684.8 s | 97.5 s | 7.1× |
 
-This result validates orchestration and measurement only. It does not demonstrate a multi-agent quality advantage.
+**The fixed roundtable buys no measurable brief-quality advantage over one direct call, at 38× the tokens and 7× the wall-clock time.**
+
+Two caveats belong with that number. First, every one of the ten runs scored 100: the structural rubric saturates, so it can reject an unusable brief but cannot rank two adequate ones. Any claim finer than "not worse" needs a rubric that discriminates, or blinded human review. Second, an earlier partial run of this same suite appeared to show the roundtable scoring *lower* (83.3 vs 100). That result was an artifact of a 1,200-token ceiling on the synthesis call, not a property of deliberation; raising the ceiling removed the gap entirely. See [docs/2026-08-04-moderator-truncation.md](docs/2026-08-04-moderator-truncation.md).
+
+The committed run records `"dirty": true` because the stop-reason instrumentation was still uncommitted in the working tree when it executed. The code under test is the tree that became commit `8c353bb` plus that instrumentation.
 
 ## Project Structure
 

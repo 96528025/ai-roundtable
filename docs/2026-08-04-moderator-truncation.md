@@ -1,9 +1,10 @@
 # Moderator synthesis truncation — 40% of evaluation runs discarded
 
 **Date:** 2026-08-04
-**Status:** Fixed, pending re-measurement
+**Status:** Fixed and re-measured
 **Affected commit:** `199d6b6`
-**Severity:** Every failure discarded fifteen successful, already-paid model calls.
+**Severity:** Every failure discarded fifteen successful, already-paid model calls — and the
+surviving subset produced a quality conclusion that turned out to be false.
 
 ---
 
@@ -156,50 +157,86 @@ These are regression tests, not smoke tests: with `MODERATOR_PARSE_ATTEMPTS` set
 Full suite after the change: **26 passed, 5 skipped** (`npm test`), plus `typecheck`,
 `lint`, and `build` clean.
 
-## 7. What is still unproven
+## 7. Re-measurement — and a false conclusion the fix retracted
 
-- **The truncation hypothesis has not been confirmed on live traffic.** It is consistent
-  with the token arithmetic and with which cases failed, but the run that produced the
-  failures predates `stop_reason` logging. The next live evaluation will either show
-  `"stopReason":"max_tokens"` on a resampled call or show that the cause was something else.
-- **The recovery rate is unknown.** The tests prove the mechanism works; they do not
-  predict how often one resample is sufficient in practice.
-- **The measured comparison is still based on three cases.** The negative result recorded
-  in `evals/results/latest.json` (multi-agent 83.3 vs single-pass 100 on the shared brief
-  rubric) came from the three cases that completed. It must be re-run at five cases before
-  any claim rests on it.
+The suite was re-run after the fix. **All five cases completed.**
 
-## 8. Follow-ups
+| | Before (ceiling 1,200) | After (ceiling 2,000) |
+| --- | --- | --- |
+| Cases completed | 3 of 5 | **5 of 5** |
+| Model calls per case | 16 | 16 |
+| Resamples triggered | n/a | **0** |
+| Transport retries | 0 | 0 |
 
-- [ ] Re-run `npm run eval` and confirm five recorded cases.
-- [ ] Check the new run for `"stopReason":"max_tokens"` to confirm or reject section 3.
-- [ ] Update the paired-baseline table in `README.md` with the five-case numbers.
-- [ ] Consider persisting per-turn state so a late failure resumes instead of restarting —
-      the resample narrows this window but does not close it. Currently listed under
-      *Future Improvements*.
+**No case needed a resample.** Raising the ceiling was sufficient on its own; the resample
+loop never fired and now sits as a backstop rather than a crutch. That is the intended
+shape of the fix — the root cause is gone, and the safety net is there for the residual
+case where the model deviates for some other reason.
 
----
+### The part that matters more than the bug
 
-## Appendix: the broader finding this run produced
+The three cases that survived the broken run produced a clean-looking negative result:
+the roundtable scored **83.3** against the control's **100**, losing in two cases on the
+same check, `next_step_actionability`. There was even a tidy mechanism available to explain
+it — synthesising five hedged positions ought to yield a more qualified recommendation than
+answering once.
 
-Separate from the reliability bug, the three completed cases showed the multi-agent
-workflow scoring **lower** than a single-call control on the shared brief rubric:
+**That conclusion was wrong, and the re-run retracted it:**
 
-| Case | Multi-agent | Single-pass | Δ |
+| Case | Before | After | Control |
 | --- | ---: | ---: | ---: |
-| consultant workflow | 100 | 100 | 0 |
-| graduate program decision | 75 | 100 | −25 |
-| campus event organizer | 75 | 100 | −25 |
-| **Average** | **83.3** | **100** | **−16.7** |
+| consultant workflow | 100 | 100 | 100 |
+| local chef subscriptions | *crashed* | 100 | 100 |
+| shopping decision brief | *crashed* | 100 | 100 |
+| graduate program decision | **75** | **100** | 100 |
+| campus event organizer | **75** | **100** | 100 |
+| **Average** | **83.3** | **100** | **100** |
 
-Cost of the losing configuration: **38.1× tokens, 6.9× wall-clock, 16× model calls.**
+The two cases that scored 75 were not producing vaguer recommendations because of
+deliberation. They were producing vaguer recommendations because the moderator was writing
+against a ceiling it could not fit a concrete next step under. **The measuring instrument
+caused the finding.**
 
-All three multi-agent losses came from the same check, `next_step_actionability`, which
-requires the recommended next step to contain both an action and a numeric or time-bound
-constraint. The single-pass control passed that check in all three cases; the roundtable
-failed it in two.
+The lesson is not "check your token limits." It is that the failed cases and the suspicious
+result had the same root cause, and the result was the more dangerous of the two: a crash
+announces itself, a plausible number does not. The 40% failure rate was what forced a look
+at the configuration at all. Had the suite been slightly more robust — three failures
+instead of five, or a ceiling that truncated only the longest case — the false conclusion
+would have shipped unnoticed, with a mechanism ready to justify it.
 
-A plausible reading — not yet tested — is that synthesising five hedged positions produces
-a more qualified recommendation than answering the question once. That is a hypothesis
-about the architecture, and confirming it needs the five-case run plus a look at the actual
-wording of the failing next steps.
+### Corrected result
+
+| Measure | Fixed roundtable | Single-pass control | Ratio |
+| --- | ---: | ---: | ---: |
+| Shared brief score (5 cases) | 100 | 100 | 0-point delta |
+| Model calls per case | 16 | 1 | 16.0× |
+| Total tokens | 183,189 | 4,831 | 38.1× |
+| Total duration | 684.8 s | 97.5 s | 7.1× |
+
+**Equal measured quality at 38× the tokens.** Not worse — but not better, and expensive.
+
+## 8. What is still unproven
+
+- **The truncation hypothesis was never directly confirmed.** `stop_reason` logging landed
+  with the fix, so the failing run predates it, and the corrected run never truncated. The
+  causal chain is inferred from the token arithmetic (966 observed against a 1,200 ceiling),
+  from which cases failed, and from the gap closing when the ceiling rose. Consistent, but
+  circumstantial. A deliberate reproduction at a 1,000-token ceiling would settle it.
+- **The recovery rate of the resample is untested in production.** It has never fired
+  outside `tests/synthesis.test.ts`.
+- **The rubric saturates.** All ten runs scored 100. The evaluator can reject an unusable
+  brief but cannot rank two adequate ones, so "equal quality" means "equally above a low
+  bar," not "indistinguishable." Any stronger claim needs a discriminating rubric or
+  blinded human review.
+- **Five cases is still small,** and each was run once at non-zero temperature. Run-to-run
+  variance has not been measured.
+
+## 9. Follow-ups
+
+- [x] Re-run `npm run eval` and confirm five recorded cases.
+- [x] Update the paired-baseline table in `README.md` with the five-case numbers.
+- [ ] Replace pass/fail checks with graded ones so the rubric can separate adequate from
+      good — currently the binding limitation on every quality claim in this repo.
+- [ ] Repeat each case two or three times to bound run-to-run variance.
+- [ ] Persist per-turn state so a late failure resumes instead of restarting. The resample
+      narrows this window but does not close it.
