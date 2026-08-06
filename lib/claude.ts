@@ -27,6 +27,7 @@ type AnthropicTextBlock = {
 type AnthropicResponse = {
   model?: string;
   request_id?: string;
+  stop_reason?: string;
   content?: AnthropicTextBlock[];
   usage?: {
     input_tokens?: number;
@@ -310,7 +311,8 @@ export async function callClaude(
         inputTokens: data.usage?.input_tokens,
         outputTokens: data.usage?.output_tokens,
         errorCategory: errorCategory(error),
-        requestId
+        requestId,
+        stopReason: data.stop_reason
       });
       throw error;
     }
@@ -323,7 +325,8 @@ export async function callClaude(
       model: data.model || model,
       inputTokens: data.usage?.input_tokens,
       outputTokens: data.usage?.output_tokens,
-      requestId
+      requestId,
+      stopReason: data.stop_reason
     });
 
     return text;

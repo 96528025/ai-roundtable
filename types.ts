@@ -35,6 +35,7 @@ export type ModelCallMetric = {
   upstreamStatus?: number;
   requestId?: string;
   retryDelayMs?: number;
+  stopReason?: string;
 };
 
 export type RunDiagnostics = {
