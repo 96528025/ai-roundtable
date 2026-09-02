@@ -832,6 +832,52 @@ h3 {
   line-height: 1.55;
 }
 
+/*
+ * Tablet: between the desktop layout and the single-column phone layout the
+ * three-up example row, four-up process steps, and side-by-side call-to-action
+ * blocks get cramped. Reflow them before the phone breakpoint collapses
+ * everything to one column.
+ */
+@media (max-width: 1024px) {
+  .shell {
+    padding: 48px 0;
+  }
+
+  .exampleRow {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .exampleRow button:last-child:nth-child(odd) {
+    grid-column: 1 / -1;
+  }
+
+  .processSteps {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .quickProcessSteps {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .actionRow,
+  .agendaActions {
+    flex-wrap: wrap;
+  }
+
+  .deeperAnalysis {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .agendaHeader {
+    display: grid;
+  }
+
+  .agendaHeader .panelBadge {
+    justify-self: start;
+  }
+}
+
 @media (max-width: 760px) {
   .shell {
     width: min(100% - 24px, 1120px);
