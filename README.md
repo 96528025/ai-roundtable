@@ -6,7 +6,7 @@
 
 AI Roundtable helps a builder decide what deserves implementation before spending time on a polished product. The default experience is a bounded **Quick Brief**: the user describes an idea once, a Planner extracts the decision structure, and a brief writer returns an honest verdict, narrow MVP, technical direction, distribution hypothesis, monetization reality check, risks, and a seven-day validation plan.
 
-The original five-agent, three-round workflow remains available as **Full Roundtable** and as an explicit evaluation baseline. It is no longer the default: the committed smoke result used 33.7× more tokens and 5.4× more wall-clock time than one direct call without improving the shared structural brief score.
+The original five-agent, three-round workflow remains available as **Full Roundtable** and as an explicit evaluation baseline. It is no longer the default. A subsequent five-case paired evaluation found the same structural-rubric score for both approaches while the fixed roundtable used 38.1× the tokens and 7.1× the wall-clock time of a one-call control; see [the committed baseline and its caveats](#committed-legacy-paired-baseline), including the fact that the run is recorded against a dirty working tree.
 
 ## Product Modes
 
@@ -75,6 +75,7 @@ Key boundaries:
 - **Progressive disclosure:** the decision appears before planner details, evidence gaps, diagnostics, or the legacy transcript.
 - **No automatic escalation:** routing can recommend Full Roundtable but cannot start it.
 - **Public deployment safety:** sample mode rejects all model-backed API routes server-side, even if a key is accidentally configured.
+- **Stale-response protection:** each browser workflow holds one request identity; a response that arrives after the user moved on is discarded, and cancelled requests are never shown as errors. Cancellation is browser-side only and does not stop server work already in flight. See [docs/2026-09-02-client-cancellation-and-error-contract.md](docs/2026-09-02-client-cancellation-and-error-contract.md).
 
 ## Tech Stack
 
@@ -84,7 +85,7 @@ Key boundaries:
 | Backend | Next.js Route Handlers with the Node.js runtime |
 | Language | TypeScript with strict type checking |
 | Model integration | Anthropic Messages API via server-side `fetch` |
-| Testing | Vitest |
+| Testing | Vitest (unit); Playwright with axe-core (browser integration, Chromium); GitHub Actions |
 | Persistence | Optional local JSON history for legacy Full runs |
 
 LangGraph is intentionally not included. The current bounded TypeScript workflow does not yet need durable human interrupts, cross-process checkpoint recovery, or multiple conditional cycles.
@@ -217,6 +218,13 @@ Public errors contain a safe message, typed code, retryability, and an upstream 
 | Authentication, network, malformed output, or other upstream failure | `502` |
 | Unexpected internal failure | `500` |
 
+The browser treats every response body as untrusted input:
+
+- An error body is accepted only when `error` is bounded text, `code` is one of the declared codes, and `retryable` is a boolean. Anything else shows a fixed generic message with the code `MALFORMED_RESPONSE`.
+- Validation codes (`INVALID_REQUEST`, `INVALID_IDEA`, `INVALID_AGENDA`, `LIVE_MODE_DISABLED`) show the server's user-facing text. Every service-side code maps to fixed client copy, so upstream detail never reaches the page.
+- **Try again** appears only when `retryable` is `true`. The code and request ID are shown as a quiet reference line for support.
+- A `2xx` body is fully parsed against the same contract the server enforces (`lib/v2/contract-schema.ts`) before anything renders; a body that fails parsing is reported as `MALFORMED_RESPONSE`.
+
 ## Observability and Privacy
 
 Each workflow has a run ID. Model-call logs include:
@@ -231,9 +239,30 @@ Each workflow has a run ID. Model-call logs include:
 
 Logs intentionally exclude the idea, goal, constraints, prompts, planner frame, model output, final brief, and transcript.
 
+## Testing
+
+All deterministic tests run with provider access disabled: no key is configured, no model is called, and live evaluations are never triggered.
+
+| Layer | Command | What it covers | Boundary |
+| --- | --- | --- | --- |
+| Unit | `npm test` | Contract parsers, error-code policy, budgets, routes with a stubbed transport, colour contrast of the palette | Node only |
+| Browser integration | `npm run test:browser` | The real production build in Chromium: keyboard flow, focus management, retry and cancellation, stale-response guards, viewport layout at 1280 / 880 / 390 px | Every `/api/*` call is fulfilled by a route mock in the browser. Route handlers and model calls are not exercised, so these are not end-to-end tests. Chromium only. |
+| Server guard | part of `npm run test:browser` | An un-mocked request to `/api/brief` is refused with `503 SERVICE_CONFIGURATION` | Proves the test server has no provider credentials |
+| Accessibility scan | part of `npm run test:browser` | axe-core, default rule set, no exclusions, over the initial form, loading, success, and error states, plus the form and result at 880 and 390 px | Zero violations means no automatically detectable violations in the scanned states. It is not a WCAG conformance claim. Contrast pairs axe cannot resolve are checked by `tests/contrast.test.ts` from the palette in `globals.css`. |
+
+Before the first browser run, install the pinned Chromium build:
+
+```bash
+npm run test:browser:install
+```
+
+Vitest collects `tests/**/*.test.ts` and `evals/**/*.test.ts`; Playwright collects `tests/browser/**/*.spec.ts`. The two runners never see each other's files.
+
+Continuous integration runs four required checks on every pull request, `typecheck`, `lint`, `test` (Vitest and Playwright), and `build`, on Node 22 with no secrets available to the workflow.
+
 ## Evaluation
 
-Run deterministic tests without calling a model:
+Run the offline test suite without calling a model:
 
 ```bash
 npm test
@@ -282,13 +311,17 @@ The committed run records `"dirty": true` because the stop-reason instrumentatio
 ## Project Structure
 
 ```text
-app/page.tsx                        Quick-first product flow and optional Full workflow
+app/page.tsx                        Quick-first product flow, request identities, focus management
 app/quick-brief-report.tsx          V2 decision-brief presentation
+app/quick-brief-error.tsx           Error region with retry action and support reference
+app/result-error-boundary.tsx       Last-resort boundary around result rendering
 app/api/brief/route.ts              Bounded Quick Brief API
 app/api/agenda/route.ts             Optional Full agenda boundary
 app/api/roundtable/route.ts         Fixed Full workflow and local-history boundary
 lib/v2/types.ts                     V2 state and output contracts
-lib/v2/validation.ts                Runtime schema and evidence-integrity checks
+lib/v2/contract-schema.ts           Pure contract parsers shared by server and browser
+lib/v2/validation.ts                Server-side request normalization and model-output validation
+lib/api-client.ts                   Browser request helpers and the client error contract
 lib/v2/budget.ts                    Shared attempt and requested-output budget
 lib/v2/planner.ts                   Planner and deterministic routing signals
 lib/v2/quick-brief.ts               Direct and planned Quick workflows
@@ -298,7 +331,11 @@ lib/claude.ts                       Anthropic transport and error classification
 lib/evaluation.ts                   Legacy and V2 structural evaluators
 evals/adaptive.eval.test.ts         Opt-in three-treatment V2 harness
 evals/roundtable.eval.test.ts       Opt-in legacy paired harness
-tests/                              Offline regression and budget tests
+tests/                              Offline unit tests (Vitest)
+tests/browser/                      Browser-integration, axe, and server-guard specs (Playwright)
+playwright.config.ts                Chromium project; builds and serves the app with provider access disabled
+.github/workflows/ci.yml            typecheck, lint, test, build checks
+docs/                               Incident analysis and architecture decisions
 ```
 
 ## Current Scope
@@ -324,5 +361,6 @@ tests/                              Offline regression and budget tests
 npm run typecheck
 npm run lint
 npm test
+npm run test:browser
 npm run build
 ```
