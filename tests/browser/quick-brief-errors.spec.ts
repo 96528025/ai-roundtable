@@ -8,13 +8,15 @@ import {
   test
 } from "./support/fixtures";
 import {
+  CLIENT_OVERLOADED_MESSAGE,
   GENERIC_FALLBACK_MESSAGE,
   INVALID_REQUEST_MESSAGE,
   LEAKED_PROMPT,
   LEAKED_STACK,
-  OVERLOADED_MESSAGE,
   OVERLOADED_REQUEST_ID,
+  SERVER_OVERLOADED_TEXT,
   malformedErrorResponses,
+  malformedSuccessBody,
   nonRetryableInvalidRequestError,
   quickBriefResult,
   retryableOverloadedError
@@ -26,7 +28,7 @@ async function submitIdea(page: Parameters<typeof openInteractiveForm>[0]) {
   await page.getByRole("button", { name: "Create Quick Brief" }).click();
 }
 
-test("retryable typed error shows only the safe message, takes focus, and recovers on retry", async ({
+test("retryable service error shows fixed client copy, takes focus, and recovers on retry", async ({
   page,
   brief
 }) => {
@@ -36,7 +38,9 @@ test("retryable typed error shows only the safe message, takes focus, and recove
   const alert = errorAlert(page);
   await expect(alert).toBeVisible();
   await expect(alert).toBeFocused();
-  await expect(alert.getByText(OVERLOADED_MESSAGE, { exact: true })).toBeVisible();
+  // Service-side codes never show server text; the client owns the message.
+  await expect(alert.getByText(CLIENT_OVERLOADED_MESSAGE, { exact: true })).toBeVisible();
+  await expect(page.getByText(SERVER_OVERLOADED_TEXT)).toHaveCount(0);
   await expect(alert).toContainText("UPSTREAM_OVERLOADED");
   await expect(alert).toContainText(OVERLOADED_REQUEST_ID);
   await expect(alert).not.toContainText(IDEA);
@@ -64,7 +68,7 @@ test("retryable typed error shows only the safe message, takes focus, and recove
   expect(brief.calls[1].body).toEqual(brief.calls[0].body);
 });
 
-test("non-retryable typed error offers no retry action and hides internals", async ({
+test("non-retryable validation error shows the server message without a retry action", async ({
   page,
   brief
 }) => {
@@ -105,8 +109,28 @@ for (const malformed of malformedErrorResponses) {
     await expect(alert.getByRole("button", { name: "Try again" })).toHaveCount(0);
     await expect(page.getByText(LEAKED_STACK)).toHaveCount(0);
     await expect(page.getByText(LEAKED_PROMPT)).toHaveCount(0);
+    await expect(page.getByText(SERVER_OVERLOADED_TEXT)).toHaveCount(0);
     await expect(page.getByText("Bad Gateway")).toHaveCount(0);
     await expect(page.getByText("boom")).toHaveCount(0);
     await expect(quickBriefResults(page)).toHaveCount(0);
   });
 }
+
+test("a 200 body that fails contract validation becomes an error instead of a broken render", async ({
+  page,
+  brief
+}) => {
+  brief.respondWith(() => ({ status: 200, body: malformedSuccessBody() }));
+  await submitIdea(page);
+
+  const alert = errorAlert(page);
+  await expect(alert).toBeVisible();
+  await expect(alert).toBeFocused();
+  await expect(alert.getByText(GENERIC_FALLBACK_MESSAGE, { exact: true })).toBeVisible();
+  await expect(alert).toContainText("MALFORMED_RESPONSE");
+  await expect(alert.getByRole("button", { name: "Try again" })).toHaveCount(0);
+  await expect(quickBriefResults(page)).toHaveCount(0);
+  // The page is intact, not blank.
+  await expect(page.getByRole("heading", { name: "Frame the idea once" })).toBeVisible();
+  await expect(page.getByLabel("Product idea")).toHaveValue(IDEA);
+});

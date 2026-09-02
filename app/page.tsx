@@ -1,9 +1,12 @@
 "use client";
 
-import { FormEvent, useEffect, useRef, useState } from "react";
+import { FormEvent, useEffect, useRef, useState, type RefObject } from "react";
 import { QuickBriefReport } from "@/app/quick-brief-report";
 import { RequestErrorNotice } from "@/app/quick-brief-error";
+import { ResultErrorBoundary } from "@/app/result-error-boundary";
 import {
+  QUICK_BRIEF_FALLBACK_MESSAGE,
+  ROUNDTABLE_FALLBACK_MESSAGE,
   buildQuickBriefRequest,
   requestAgenda,
   requestQuickBrief,
@@ -56,6 +59,29 @@ type Failure = {
 /** Where focus should move after the next commit. Cleared once applied. */
 type FocusTarget = "status" | "result" | "error";
 
+/**
+ * One in-flight request per workflow. The controller stored in the ref is the
+ * request's identity: after every `await`, a continuation compares itself to
+ * the ref before touching any state, so a superseded or cancelled request can
+ * never write loading, result, failure, or focus state.
+ */
+type RequestRef = RefObject<AbortController | null>;
+
+function beginRequest(ref: RequestRef): AbortController {
+  const controller = new AbortController();
+  ref.current = controller;
+  return controller;
+}
+
+/** Invalidate first, then abort, so the continuation already sees itself as stale. */
+function cancelRequest(ref: RequestRef): boolean {
+  const pending = ref.current;
+  if (!pending) return false;
+  ref.current = null;
+  pending.abort();
+  return true;
+}
+
 function SummaryList({ title, items }: { title: string; items: string[] }) {
   return (
     <section className="card">
@@ -88,10 +114,9 @@ export default function Home() {
   const [isRunningRoundtable, setIsRunningRoundtable] = useState(false);
   const [pendingFocus, setPendingFocus] = useState<FocusTarget | null>(null);
 
-  // The in-flight Quick Brief request. Any action that makes the current inputs
-  // or result stale aborts it; a response whose controller is no longer the
-  // current one is ignored so it can never overwrite newer UI state.
   const quickRequestRef = useRef<AbortController | null>(null);
+  const agendaRequestRef = useRef<AbortController | null>(null);
+  const roundtableRequestRef = useRef<AbortController | null>(null);
   const statusRef = useRef<HTMLElement>(null);
   const resultRef = useRef<HTMLElement>(null);
   const errorRef = useRef<HTMLDivElement>(null);
@@ -109,21 +134,46 @@ export default function Home() {
   }, [pendingFocus]);
 
   useEffect(() => {
+    const refs = [quickRequestRef, agendaRequestRef, roundtableRequestRef];
     return () => {
-      quickRequestRef.current?.abort();
+      // Invalidate every identity before aborting so no continuation updates
+      // state after unmount.
+      const pending = refs.map((ref) => {
+        const controller = ref.current;
+        ref.current = null;
+        return controller;
+      });
+      pending.forEach((controller) => controller?.abort());
     };
   }, []);
 
+  /** Synchronous guard: at most one workflow runs at a time, even within one tick. */
+  function requestInFlight(): boolean {
+    return Boolean(
+      quickRequestRef.current || agendaRequestRef.current || roundtableRequestRef.current
+    );
+  }
+
   function cancelQuickBrief() {
-    const pending = quickRequestRef.current;
-    if (!pending) return;
-    quickRequestRef.current = null;
-    pending.abort();
-    setIsRunningQuick(false);
+    if (cancelRequest(quickRequestRef)) setIsRunningQuick(false);
+  }
+
+  function cancelAgenda() {
+    if (cancelRequest(agendaRequestRef)) setIsPreparing(false);
+  }
+
+  function cancelRoundtable() {
+    if (cancelRequest(roundtableRequestRef)) setIsRunningRoundtable(false);
+  }
+
+  function cancelAllRequests() {
+    cancelQuickBrief();
+    cancelAgenda();
+    cancelRoundtable();
   }
 
   function resetAllResults() {
-    cancelQuickBrief();
+    cancelAllRequests();
     setAgenda(null);
     setQuickResult(null);
     setQuickResultSource(null);
@@ -140,13 +190,16 @@ export default function Home() {
 
   function choosePanel(nextPanel: PanelMode) {
     setPanelMode(nextPanel);
+    // The panel only shapes Full Roundtable work; a pending Quick Brief stays valid.
+    cancelAgenda();
+    cancelRoundtable();
     setAgenda(null);
     setRoundtableResult(null);
     setFailure(null);
   }
 
   function viewSampleBrief() {
-    cancelQuickBrief();
+    cancelAllRequests();
     setIdea(demoIdea);
     setGoal("Decide whether this should become a product or remain a personal tool.");
     setConstraintsText("Reduce screen time\nDo not compromise application-tracker accuracy");
@@ -159,10 +212,9 @@ export default function Home() {
   }
 
   async function submitQuickBrief() {
-    if (quickRequestRef.current || isPreparing || isRunningRoundtable) return;
+    if (requestInFlight()) return;
 
-    const controller = new AbortController();
-    quickRequestRef.current = controller;
+    const controller = beginRequest(quickRequestRef);
     setFailure(null);
     setAgenda(null);
     setRoundtableResult(null);
@@ -197,12 +249,19 @@ export default function Home() {
   }
 
   async function prepareFullAgenda() {
+    if (requestInFlight()) return;
+
+    const controller = beginRequest(agendaRequestRef);
     setFailure(null);
     setAgenda(null);
     setRoundtableResult(null);
     setIsPreparing(true);
 
-    const outcome = await requestAgenda({ idea, panelMode });
+    const outcome = await requestAgenda({ idea, panelMode }, controller.signal);
+
+    // Cancelled or superseded while waiting: leave the current UI untouched.
+    if (agendaRequestRef.current !== controller) return;
+    agendaRequestRef.current = null;
     setIsPreparing(false);
 
     if (outcome.status === "success") {
@@ -215,6 +274,7 @@ export default function Home() {
   }
 
   function updateTopic(index: number, value: string) {
+    cancelRoundtable();
     setRoundtableResult(null);
     setAgenda((current) =>
       current?.map((topic, topicIndex) => (topicIndex === index ? value : topic)) ?? null
@@ -222,6 +282,7 @@ export default function Home() {
   }
 
   function removeTopic(index: number) {
+    cancelRoundtable();
     setRoundtableResult(null);
     setAgenda((current) => {
       if (!current || current.length <= 3) return current;
@@ -230,6 +291,7 @@ export default function Home() {
   }
 
   function addTopic() {
+    cancelRoundtable();
     setRoundtableResult(null);
     setAgenda((current) => {
       if (!current || current.length >= 5) return current;
@@ -238,13 +300,21 @@ export default function Home() {
   }
 
   async function conveneRoundtable() {
-    if (!agenda) return;
+    if (!agenda || requestInFlight()) return;
 
+    const controller = beginRequest(roundtableRequestRef);
     setFailure(null);
     setRoundtableResult(null);
     setIsRunningRoundtable(true);
 
-    const outcome = await requestRoundtable({ idea, panelMode, topics: agenda });
+    const outcome = await requestRoundtable(
+      { idea, panelMode, topics: agenda },
+      controller.signal
+    );
+
+    // Cancelled or superseded while waiting: leave the current UI untouched.
+    if (roundtableRequestRef.current !== controller) return;
+    roundtableRequestRef.current = null;
     setIsRunningRoundtable(false);
 
     if (outcome.status === "success") {
@@ -456,15 +526,17 @@ export default function Home() {
       ) : null}
 
       {quickResult && quickResultSource ? (
-        <QuickBriefReport
-          ref={resultRef}
-          result={quickResult}
-          idea={idea}
-          source={quickResultSource}
-          onPrepareFull={
-            publicDemoOnly || isBusy || !ideaIsValid ? undefined : prepareFullAgenda
-          }
-        />
+        <ResultErrorBoundary resetKey={quickResult} fallbackMessage={QUICK_BRIEF_FALLBACK_MESSAGE}>
+          <QuickBriefReport
+            ref={resultRef}
+            result={quickResult}
+            idea={idea}
+            source={quickResultSource}
+            onPrepareFull={
+              publicDemoOnly || isBusy || !ideaIsValid ? undefined : prepareFullAgenda
+            }
+          />
+        </ResultErrorBoundary>
       ) : null}
 
       {agenda ? (
@@ -543,96 +615,101 @@ export default function Home() {
       ) : null}
 
       {roundtableResult ? (
-        <section className="results" aria-label="Full Roundtable result">
-          <div className="meetingContext">
-            <span>Full Roundtable · fixed baseline</span>
-            <span>{panelName(roundtableResult.panelMode)}</span>
-            <span>{roundtableResult.agenda.length} approved topics</span>
-            <span>{roundtableResult.transcript.length} agent turns</span>
-            {roundtableResult.diagnostics ? (
-              <span>{roundtableResult.diagnostics.modelCallCount} observed call attempts</span>
-            ) : null}
-          </div>
-          <section className="ideaContext" aria-label="Idea under review">
-            <span>Idea under review</span>
-            <p>{idea}</p>
-          </section>
-          <section className="summaryHero">
-            <span>Moderator Summary</span>
-            <p>{roundtableResult.summary.executiveSummary}</p>
-          </section>
-
-          <div className="summaryGrid">
-            <SummaryList title="Consensus" items={roundtableResult.summary.consensus} />
-            <SummaryList
-              title="Key Disagreements"
-              items={roundtableResult.summary.disagreements}
-            />
-            <SummaryList title="Biggest Risks" items={roundtableResult.summary.risks} />
-            <section className="card">
-              <h3>Recommended Next Step</h3>
-              <p>{roundtableResult.summary.recommendedNextStep}</p>
-            </section>
-            <section className="card questionCard">
-              <h3>One Follow-up Question</h3>
-              <p>{roundtableResult.summary.followUpQuestion}</p>
-            </section>
-          </div>
-
-          <details className="transcript">
-            <summary>Show Internal Debate</summary>
-            <div className="transcriptList">
-              {roundtableResult.transcript.map((entry, index) => (
-                <article
-                  key={`${entry.round}-${entry.agentName}-${index}`}
-                  className="transcriptEntry"
-                >
-                  <div>
-                    <span>Round {entry.round}</span>
-                    <strong>{entry.agentName}</strong>
-                  </div>
-                  <p>{entry.content}</p>
-                </article>
-              ))}
+        <ResultErrorBoundary
+          resetKey={roundtableResult}
+          fallbackMessage={ROUNDTABLE_FALLBACK_MESSAGE}
+        >
+          <section className="results" aria-label="Full Roundtable result">
+            <div className="meetingContext">
+              <span>Full Roundtable · fixed baseline</span>
+              <span>{panelName(roundtableResult.panelMode)}</span>
+              <span>{roundtableResult.agenda.length} approved topics</span>
+              <span>{roundtableResult.transcript.length} agent turns</span>
+              {roundtableResult.diagnostics ? (
+                <span>{roundtableResult.diagnostics.modelCallCount} observed call attempts</span>
+              ) : null}
             </div>
-          </details>
+            <section className="ideaContext" aria-label="Idea under review">
+              <span>Idea under review</span>
+              <p>{idea}</p>
+            </section>
+            <section className="summaryHero">
+              <span>Moderator Summary</span>
+              <p>{roundtableResult.summary.executiveSummary}</p>
+            </section>
 
-          {roundtableResult.diagnostics ? (
-            <details className="diagnostics">
-              <summary>Show Run Diagnostics</summary>
-              <dl>
-                <div>
-                  <dt>Run ID</dt>
-                  <dd>{roundtableResult.diagnostics.runId}</dd>
-                </div>
-                <div>
-                  <dt>Duration</dt>
-                  <dd>{(roundtableResult.diagnostics.durationMs / 1000).toFixed(1)} seconds</dd>
-                </div>
-                <div>
-                  <dt>Call attempts</dt>
-                  <dd>
-                    {roundtableResult.diagnostics.successfulModelCalls} succeeded ·{" "}
-                    {roundtableResult.diagnostics.failedModelCalls} failed ·{" "}
-                    {roundtableResult.diagnostics.retryCount} retries
-                  </dd>
-                </div>
-                <div>
-                  <dt>Model</dt>
-                  <dd>{roundtableResult.diagnostics.models.join(", ") || "Unavailable"}</dd>
-                </div>
-                <div>
-                  <dt>Tokens</dt>
-                  <dd>
-                    {roundtableResult.diagnostics.inputTokens ?? "Unavailable"} input ·{" "}
-                    {roundtableResult.diagnostics.outputTokens ?? "Unavailable"} output
-                  </dd>
-                </div>
-              </dl>
-              <p>Diagnostics exclude the idea, prompts, and transcript content.</p>
+            <div className="summaryGrid">
+              <SummaryList title="Consensus" items={roundtableResult.summary.consensus} />
+              <SummaryList
+                title="Key Disagreements"
+                items={roundtableResult.summary.disagreements}
+              />
+              <SummaryList title="Biggest Risks" items={roundtableResult.summary.risks} />
+              <section className="card">
+                <h3>Recommended Next Step</h3>
+                <p>{roundtableResult.summary.recommendedNextStep}</p>
+              </section>
+              <section className="card questionCard">
+                <h3>One Follow-up Question</h3>
+                <p>{roundtableResult.summary.followUpQuestion}</p>
+              </section>
+            </div>
+
+            <details className="transcript">
+              <summary>Show Internal Debate</summary>
+              <div className="transcriptList">
+                {roundtableResult.transcript.map((entry, index) => (
+                  <article
+                    key={`${entry.round}-${entry.agentName}-${index}`}
+                    className="transcriptEntry"
+                  >
+                    <div>
+                      <span>Round {entry.round}</span>
+                      <strong>{entry.agentName}</strong>
+                    </div>
+                    <p>{entry.content}</p>
+                  </article>
+                ))}
+              </div>
             </details>
-          ) : null}
-        </section>
+
+            {roundtableResult.diagnostics ? (
+              <details className="diagnostics">
+                <summary>Show Run Diagnostics</summary>
+                <dl>
+                  <div>
+                    <dt>Run ID</dt>
+                    <dd>{roundtableResult.diagnostics.runId}</dd>
+                  </div>
+                  <div>
+                    <dt>Duration</dt>
+                    <dd>{(roundtableResult.diagnostics.durationMs / 1000).toFixed(1)} seconds</dd>
+                  </div>
+                  <div>
+                    <dt>Call attempts</dt>
+                    <dd>
+                      {roundtableResult.diagnostics.successfulModelCalls} succeeded ·{" "}
+                      {roundtableResult.diagnostics.failedModelCalls} failed ·{" "}
+                      {roundtableResult.diagnostics.retryCount} retries
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>Model</dt>
+                    <dd>{roundtableResult.diagnostics.models.join(", ") || "Unavailable"}</dd>
+                  </div>
+                  <div>
+                    <dt>Tokens</dt>
+                    <dd>
+                      {roundtableResult.diagnostics.inputTokens ?? "Unavailable"} input ·{" "}
+                      {roundtableResult.diagnostics.outputTokens ?? "Unavailable"} output
+                    </dd>
+                  </div>
+                </dl>
+                <p>Diagnostics exclude the idea, prompts, and transcript content.</p>
+              </details>
+            ) : null}
+          </section>
+        </ResultErrorBoundary>
       ) : null}
     </main>
   );

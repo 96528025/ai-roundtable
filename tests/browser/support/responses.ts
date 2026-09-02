@@ -1,4 +1,6 @@
+import { demoResult } from "../../../lib/demo";
 import type { QuickBriefResult } from "../../../lib/v2/types";
+import type { RoundtableResult } from "../../../types";
 import { ideaBriefFixture, ideaFrameFixture } from "../../v2-fixtures";
 
 /**
@@ -39,19 +41,39 @@ export const quickBriefResult: QuickBriefResult = {
 /** Text that appears only in the live fixture, never in the sample result. */
 export const LIVE_RESULT_MARKER = "A browser-based comparison assistant";
 
+/** A /api/agenda success body for the given idea; extra fields mirror the real route. */
+export function agendaResponseFor(idea: string) {
+  return {
+    idea,
+    panelMode: "startup",
+    topics: [
+      "Demand and the current comparison workaround",
+      "Smallest testable comparison MVP",
+      "Trust in extracted product data"
+    ],
+    diagnostics: quickBriefResult.diagnostics
+  };
+}
+
+/** The shipped sample roundtable doubles as a valid /api/roundtable success body. */
+export const roundtableResult: RoundtableResult = demoResult;
+
 /** Strings planted in mocked error bodies that must never reach the page. */
 export const LEAKED_STACK = "at callClaude (lib/claude.ts:221:9)";
 export const LEAKED_PROMPT = "SYSTEM PROMPT MUST NOT LEAK";
 
-export const OVERLOADED_MESSAGE =
-  "The model provider is temporarily overloaded. Please try again in a moment.";
+/** Raw server text for a service-side code. The client must replace it with its own copy. */
+export const SERVER_OVERLOADED_TEXT =
+  "overloaded_error 529 from provider (raw upstream text that must not be shown)";
+export const CLIENT_OVERLOADED_MESSAGE =
+  "The AI service is temporarily overloaded. Please try again shortly.";
 export const OVERLOADED_REQUEST_ID = "req_browser_overloaded_01";
 
 export const retryableOverloadedError = {
   status: 503,
   headers: { "retry-after": "2" },
   body: {
-    error: OVERLOADED_MESSAGE,
+    error: SERVER_OVERLOADED_TEXT,
     code: "UPSTREAM_OVERLOADED",
     retryable: true,
     requestId: OVERLOADED_REQUEST_ID,
@@ -60,6 +82,7 @@ export const retryableOverloadedError = {
   }
 };
 
+/** Validation codes are user-correctable, so their server text is shown verbatim. */
 export const INVALID_REQUEST_MESSAGE = "Provide no more than 5 constraints.";
 
 export const nonRetryableInvalidRequestError = {
@@ -93,5 +116,17 @@ export const malformedErrorResponses = [
     name: "contract fields with the wrong types",
     status: 500,
     body: { error: LEAKED_STACK.repeat(20), code: "NOT_A_CODE", retryable: "yes" }
+  },
+  {
+    name: "contract body missing the retryable flag",
+    status: 503,
+    body: { error: SERVER_OVERLOADED_TEXT, code: "UPSTREAM_OVERLOADED" }
   }
 ];
+
+/** A 200 body that passes shallow checks but fails full contract validation. */
+export function malformedSuccessBody(): unknown {
+  const body = structuredClone(quickBriefResult) as { brief: { evidence: { status?: string } } };
+  delete body.brief.evidence.status;
+  return body;
+}

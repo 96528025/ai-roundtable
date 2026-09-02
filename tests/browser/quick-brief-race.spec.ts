@@ -1,4 +1,3 @@
-import type { Page } from "@playwright/test";
 import {
   IDEA,
   deferred,
@@ -8,20 +7,11 @@ import {
   openInteractiveForm,
   quickBriefResults,
   quickBriefStatus,
-  test
+  test,
+  trackFailedRequests
 } from "./support/fixtures";
 import { LIVE_RESULT_MARKER, quickBriefResult } from "./support/responses";
 import { demoIdea } from "../../lib/demo";
-
-function trackFailedBriefRequests(page: Page): string[] {
-  const failures: string[] = [];
-  page.on("requestfailed", (request) => {
-    if (new URL(request.url()).pathname === "/api/brief") {
-      failures.push(request.failure()?.errorText ?? "unknown");
-    }
-  });
-  return failures;
-}
 
 test("switching to the sample while a Quick Brief is pending cancels it, and the stale response never lands", async ({
   page,
@@ -32,7 +22,7 @@ test("switching to the sample while a Quick Brief is pending cancels it, and the
     await release.promise;
     return { status: 200, body: quickBriefResult };
   });
-  const failedRequests = trackFailedBriefRequests(page);
+  const failedRequests = trackFailedRequests(page, "/api/brief");
 
   await openInteractiveForm(page);
   await page.getByLabel("Product idea").fill(IDEA);
@@ -76,7 +66,7 @@ test("choosing another example while a Quick Brief is pending clears the request
     await release.promise;
     return { status: 200, body: quickBriefResult };
   });
-  const failedRequests = trackFailedBriefRequests(page);
+  const failedRequests = trackFailedRequests(page, "/api/brief");
 
   await openInteractiveForm(page);
   await page.getByLabel("Product idea").fill(IDEA);

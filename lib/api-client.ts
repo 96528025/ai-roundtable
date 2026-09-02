@@ -1,13 +1,23 @@
 import { isAppErrorCode, type AppErrorCode } from "@/lib/errors";
+import {
+  ContractSchemaError,
+  parseAgendaResponseValue,
+  parseQuickBriefResultValue,
+  parseRoundtableResultValue,
+  type AgendaResponse
+} from "@/lib/v2/contract-schema";
 import type { QuickBriefDisplayResult } from "@/lib/v2/types";
 import type { PanelMode, RoundtableResult } from "@/types";
 
+export type { AgendaResponse };
+
 /**
  * Browser-side view of the public error contract served by every API route:
- * `{ error, code, retryable, requestId? }`. Responses are untrusted input, so
- * anything that does not match the contract collapses into a generic, safe
- * message. Two client-only codes cover failures that never reach the server
- * contract at all.
+ * `{ error, code, retryable, requestId? }`. Responses are untrusted input: a
+ * body is accepted only when all three required fields have the right types,
+ * and server-provided text is shown only for user-correctable validation
+ * codes. Every other known code maps to fixed client copy, so internal detail
+ * can never reach the page even if a future server message carried it.
  */
 export type ClientErrorCode = AppErrorCode | "NETWORK" | "MALFORMED_RESPONSE";
 
@@ -29,6 +39,31 @@ export const ROUNDTABLE_FALLBACK_MESSAGE = "The Full Roundtable could not finish
 export const NETWORK_ERROR_MESSAGE =
   "The server could not be reached. Check your connection and try again.";
 
+/** Codes whose server message is written for the user and is shown verbatim. */
+const validationCodes = [
+  "INVALID_REQUEST",
+  "INVALID_IDEA",
+  "INVALID_AGENDA",
+  "LIVE_MODE_DISABLED"
+] as const satisfies readonly AppErrorCode[];
+
+/** Fixed client copy for service-side failures. INTERNAL_ERROR uses the caller's fallback. */
+export const serviceErrorMessages: Readonly<
+  Record<Exclude<AppErrorCode, (typeof validationCodes)[number] | "INTERNAL_ERROR">, string>
+> = {
+  SERVICE_CONFIGURATION: "This server is not configured for live model execution.",
+  UPSTREAM_AUTHENTICATION:
+    "The AI service rejected the server's credentials. Live briefs are unavailable until the server configuration is fixed.",
+  UPSTREAM_RATE_LIMIT: "The AI service is rate-limited right now. Please try again shortly.",
+  UPSTREAM_TIMEOUT: "The AI service took too long to respond. Please try again.",
+  UPSTREAM_OVERLOADED: "The AI service is temporarily overloaded. Please try again shortly.",
+  UPSTREAM_FAILURE: "The AI service returned a temporary error. Please try again.",
+  UPSTREAM_NETWORK: "The AI service could not be reached from the server. Please try again.",
+  INVALID_MODEL_RESPONSE: "The AI service returned an unusable response. Please try again.",
+  BUDGET_EXHAUSTED:
+    "The request used its full model-call budget without a valid result. Please try again."
+};
+
 const MESSAGE_MAX_CHARACTERS = 400;
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
 
@@ -44,28 +79,35 @@ export function malformedResponseError(fallbackMessage: string): ClientError {
   return { message: fallbackMessage, code: "MALFORMED_RESPONSE", retryable: false };
 }
 
+function messageFor(code: AppErrorCode, serverMessage: string, fallbackMessage: string): string {
+  if ((validationCodes as readonly AppErrorCode[]).includes(code)) return serverMessage;
+  if (code === "INTERNAL_ERROR") return fallbackMessage;
+  return serviceErrorMessages[code as keyof typeof serviceErrorMessages];
+}
+
 /**
- * Parse an error body against the public contract. Only a non-empty, bounded
- * `error` string paired with a known `code` is trusted; everything else falls
- * back to the caller's generic message. `retryable` must be literally `true`,
- * and `requestId` is kept only when it looks like an opaque identifier.
+ * Parse an error body against the public contract. `error` must be non-empty
+ * bounded text, `code` a known code, and `retryable` a boolean; otherwise the
+ * whole body is treated as malformed. `requestId` is kept only when it looks
+ * like an opaque identifier.
  */
 export function parsePublicError(body: unknown, fallbackMessage: string): ClientError {
   if (!isRecord(body)) return malformedResponseError(fallbackMessage);
 
-  const message = typeof body.error === "string" ? body.error.trim() : "";
+  const serverMessage = typeof body.error === "string" ? body.error.trim() : "";
   if (
-    message.length === 0 ||
-    message.length > MESSAGE_MAX_CHARACTERS ||
-    !isAppErrorCode(body.code)
+    serverMessage.length === 0 ||
+    serverMessage.length > MESSAGE_MAX_CHARACTERS ||
+    !isAppErrorCode(body.code) ||
+    typeof body.retryable !== "boolean"
   ) {
     return malformedResponseError(fallbackMessage);
   }
 
   const error: ClientError = {
-    message,
+    message: messageFor(body.code, serverMessage, fallbackMessage),
     code: body.code,
-    retryable: body.retryable === true
+    retryable: body.retryable
   };
   if (typeof body.requestId === "string" && REQUEST_ID_PATTERN.test(body.requestId)) {
     error.requestId = body.requestId;
@@ -77,6 +119,7 @@ export function parsePublicError(body: unknown, fallbackMessage: string): Client
  * POST JSON and classify the outcome. Never throws: transport failures become
  * a retryable NETWORK error, cancellation becomes `aborted`, and any body that
  * cannot be read as JSON becomes a non-retryable MALFORMED_RESPONSE error.
+ * A 2xx body is returned as `unknown`; callers must parse it before use.
  */
 export async function postJson(
   url: string,
@@ -114,6 +157,23 @@ export async function postJson(
   return { status: "success", data };
 }
 
+/** Run a full contract parser over a 2xx body; any schema failure is a malformed response. */
+function parseSuccess<T>(
+  outcome: RequestOutcome<unknown>,
+  parse: (value: unknown) => T,
+  fallbackMessage: string
+): RequestOutcome<T> {
+  if (outcome.status !== "success") return outcome;
+  try {
+    return { status: "success", data: parse(outcome.data) };
+  } catch (error) {
+    if (error instanceof ContractSchemaError) {
+      return { status: "error", error: malformedResponseError(fallbackMessage) };
+    }
+    throw error;
+  }
+}
+
 export function constraintsFromText(value: string): string[] {
   return value
     .split(/\r?\n/)
@@ -139,82 +199,26 @@ export function buildQuickBriefRequest(
   };
 }
 
-/**
- * Shallow shape check for a successful Quick Brief body. The server validates
- * the full contract before responding; this only guards the sections the UI
- * dereferences immediately so a wrong-shaped body degrades to an error state
- * instead of a crashed render.
- */
-export function isQuickBriefDisplayResult(value: unknown): value is QuickBriefDisplayResult {
-  if (!isRecord(value)) return false;
-  const { frame, planning, route, brief } = value;
-  return (
-    isRecord(frame) &&
-    Array.isArray(frame.unknowns) &&
-    isRecord(planning) &&
-    isRecord(route) &&
-    isRecord(brief) &&
-    isRecord(brief.verdict) &&
-    typeof brief.verdict.decision === "string" &&
-    Array.isArray(brief.verdict.flags) &&
-    isRecord(brief.evidence) &&
-    isRecord(brief.recommendedMvp) &&
-    isRecord(brief.technicalApproach) &&
-    Array.isArray(brief.validationPlan7Days)
-  );
-}
-
 export async function requestQuickBrief(
   body: QuickBriefRequestBody,
   signal?: AbortSignal
 ): Promise<RequestOutcome<QuickBriefDisplayResult>> {
   const outcome = await postJson("/api/brief", body, QUICK_BRIEF_FALLBACK_MESSAGE, signal);
-  if (outcome.status !== "success") return outcome;
-  if (!isQuickBriefDisplayResult(outcome.data)) {
-    return { status: "error", error: malformedResponseError(QUICK_BRIEF_FALLBACK_MESSAGE) };
-  }
-  return { status: "success", data: outcome.data };
-}
-
-export type AgendaResponse = { idea: string; topics: string[] };
-
-function isAgendaResponse(value: unknown): value is AgendaResponse {
-  return (
-    isRecord(value) &&
-    typeof value.idea === "string" &&
-    Array.isArray(value.topics) &&
-    value.topics.every((topic) => typeof topic === "string")
-  );
+  return parseSuccess(outcome, parseQuickBriefResultValue, QUICK_BRIEF_FALLBACK_MESSAGE);
 }
 
 export async function requestAgenda(
-  body: { idea: string; panelMode: PanelMode }
+  body: { idea: string; panelMode: PanelMode },
+  signal?: AbortSignal
 ): Promise<RequestOutcome<AgendaResponse>> {
-  const outcome = await postJson("/api/agenda", body, AGENDA_FALLBACK_MESSAGE);
-  if (outcome.status !== "success") return outcome;
-  if (!isAgendaResponse(outcome.data)) {
-    return { status: "error", error: malformedResponseError(AGENDA_FALLBACK_MESSAGE) };
-  }
-  return { status: "success", data: outcome.data };
-}
-
-function isRoundtableResult(value: unknown): value is RoundtableResult {
-  return (
-    isRecord(value) &&
-    Array.isArray(value.agenda) &&
-    typeof value.panelMode === "string" &&
-    isRecord(value.summary) &&
-    Array.isArray(value.transcript)
-  );
+  const outcome = await postJson("/api/agenda", body, AGENDA_FALLBACK_MESSAGE, signal);
+  return parseSuccess(outcome, parseAgendaResponseValue, AGENDA_FALLBACK_MESSAGE);
 }
 
 export async function requestRoundtable(
-  body: { idea: string; panelMode: PanelMode; topics: string[] }
+  body: { idea: string; panelMode: PanelMode; topics: string[] },
+  signal?: AbortSignal
 ): Promise<RequestOutcome<RoundtableResult>> {
-  const outcome = await postJson("/api/roundtable", body, ROUNDTABLE_FALLBACK_MESSAGE);
-  if (outcome.status !== "success") return outcome;
-  if (!isRoundtableResult(outcome.data)) {
-    return { status: "error", error: malformedResponseError(ROUNDTABLE_FALLBACK_MESSAGE) };
-  }
-  return { status: "success", data: outcome.data };
+  const outcome = await postJson("/api/roundtable", body, ROUNDTABLE_FALLBACK_MESSAGE, signal);
+  return parseSuccess(outcome, parseRoundtableResultValue, ROUNDTABLE_FALLBACK_MESSAGE);
 }

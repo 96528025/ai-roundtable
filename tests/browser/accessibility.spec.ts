@@ -9,7 +9,7 @@ import {
   quickBriefResults,
   quickBriefStatus,
   test,
-  type BriefMock
+  type RouteMock
 } from "./support/fixtures";
 import { quickBriefResult, retryableOverloadedError } from "./support/responses";
 
@@ -37,7 +37,7 @@ async function expectNoAxeViolations(page: Page, state: string) {
   expect(details, `${state} should have no axe violations`).toEqual([]);
 }
 
-async function startPendingQuickBrief(page: Page, brief: BriefMock) {
+async function startPendingQuickBrief(page: Page, brief: RouteMock) {
   const release = deferred();
   brief.respondWith(async () => {
     await release.promise;

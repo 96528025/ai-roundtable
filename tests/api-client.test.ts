@@ -3,16 +3,21 @@ import {
   AGENDA_FALLBACK_MESSAGE,
   NETWORK_ERROR_MESSAGE,
   QUICK_BRIEF_FALLBACK_MESSAGE,
+  ROUNDTABLE_FALLBACK_MESSAGE,
   buildQuickBriefRequest,
   constraintsFromText,
-  isQuickBriefDisplayResult,
   parsePublicError,
   postJson,
   requestAgenda,
-  requestQuickBrief
+  requestQuickBrief,
+  requestRoundtable,
+  serviceErrorMessages
 } from "@/lib/api-client";
+import { demoResult } from "@/lib/demo";
 import { appErrorCodes } from "@/lib/errors";
 import { demoQuickResult } from "@/lib/v2/demo";
+import type { QuickBriefResult } from "@/lib/v2/types";
+import { ideaBriefFixture, ideaFrameFixture } from "./v2-fixtures";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -25,11 +30,48 @@ function jsonResponse(status: number, body: unknown): Response {
   });
 }
 
+function stubFetch(response: Response) {
+  const fetchMock = vi.fn().mockResolvedValue(response);
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
+}
+
 const LEAKED = {
   stack: "Error: boom\n    at callClaude (lib/claude.ts:221:9)",
   prompt: "SYSTEM PROMPT MUST NOT LEAK",
   idea: "the user's private idea"
 };
+
+const fullQuickBriefResult: QuickBriefResult = {
+  frame: ideaFrameFixture,
+  planning: { status: "model" },
+  route: { selectedPath: "quick", fullRoundtableRecommended: false, reasonCodes: ["default_quick_path"] },
+  brief: ideaBriefFixture,
+  budget: {
+    maxCallAttempts: 4,
+    usedCallAttempts: 2,
+    retryAttempts: 0,
+    maxRequestedOutputTokens: 8_400,
+    requestedOutputTokens: 5_000
+  },
+  diagnostics: {
+    runId: "run-1",
+    startedAt: "2026-09-02T00:00:00.000Z",
+    durationMs: 1_000,
+    modelCallCount: 2,
+    successfulModelCalls: 2,
+    failedModelCalls: 0,
+    retryCount: 0,
+    inputTokens: 100,
+    outputTokens: 50,
+    models: ["test-model"]
+  }
+};
+
+const malformedOutcome = (message: string) => ({
+  status: "error",
+  error: { message, code: "MALFORMED_RESPONSE", retryable: false }
+});
 
 describe("constraintsFromText", () => {
   it("splits lines, trims them, and drops blank lines", () => {
@@ -72,32 +114,28 @@ describe("buildQuickBriefRequest", () => {
 });
 
 describe("parsePublicError", () => {
-  it("keeps a retryable typed error including its request ID", () => {
-    expect(
-      parsePublicError(
-        {
-          error: "Temporarily overloaded.",
-          code: "UPSTREAM_OVERLOADED",
-          retryable: true,
-          requestId: "req_abc-123"
-        },
-        "Fallback"
-      )
-    ).toEqual({
-      message: "Temporarily overloaded.",
-      code: "UPSTREAM_OVERLOADED",
-      retryable: true,
-      requestId: "req_abc-123"
-    });
+  it("shows server text for user-correctable validation codes", () => {
+    for (const code of ["INVALID_REQUEST", "INVALID_IDEA", "INVALID_AGENDA", "LIVE_MODE_DISABLED"]) {
+      expect(parsePublicError({ error: "Fix your input.", code, retryable: false }, "Fallback"))
+        .toEqual({ message: "Fix your input.", code, retryable: false });
+    }
   });
 
-  it("keeps a non-retryable typed error without inventing a request ID", () => {
-    const parsed = parsePublicError(
-      { error: "Bad agenda", code: "INVALID_AGENDA", retryable: false },
-      "Fallback"
-    );
-    expect(parsed).toEqual({ message: "Bad agenda", code: "INVALID_AGENDA", retryable: false });
-    expect("requestId" in parsed).toBe(false);
+  it("replaces server text with fixed client copy for service-side codes", () => {
+    for (const [code, message] of Object.entries(serviceErrorMessages)) {
+      const parsed = parsePublicError(
+        { error: `raw upstream detail for ${code}`, code, retryable: true, requestId: "req-1" },
+        "Fallback"
+      );
+      expect(parsed).toEqual({ message, code, retryable: true, requestId: "req-1" });
+      expect(parsed.message).not.toContain("raw upstream");
+    }
+  });
+
+  it("uses the caller's fallback for INTERNAL_ERROR", () => {
+    expect(
+      parsePublicError({ error: "database password leaked", code: "INTERNAL_ERROR", retryable: false }, "Fallback")
+    ).toEqual({ message: "Fallback", code: "INTERNAL_ERROR", retryable: false });
   });
 
   it("recognizes every server error code", () => {
@@ -106,36 +144,49 @@ describe("parsePublicError", () => {
     }
   });
 
-  it("never carries unknown fields such as stacks or prompts through", () => {
+  it("keeps a retryable error's request ID and never carries unknown fields through", () => {
     const parsed = parsePublicError(
       {
-        error: "Safe message",
-        code: "INTERNAL_ERROR",
-        retryable: false,
+        error: "Temporarily overloaded.",
+        code: "UPSTREAM_OVERLOADED",
+        retryable: true,
+        requestId: "req_abc-123",
         stack: LEAKED.stack,
         prompt: LEAKED.prompt,
         details: { idea: LEAKED.idea }
       },
       "Fallback"
     );
-    expect(parsed).toEqual({ message: "Safe message", code: "INTERNAL_ERROR", retryable: false });
+    expect(parsed).toEqual({
+      message: serviceErrorMessages.UPSTREAM_OVERLOADED,
+      code: "UPSTREAM_OVERLOADED",
+      retryable: true,
+      requestId: "req_abc-123"
+    });
     expect(JSON.stringify(parsed)).not.toContain("lib/claude.ts");
     expect(JSON.stringify(parsed)).not.toContain(LEAKED.prompt);
   });
 
-  it("treats anything but a literal true as non-retryable", () => {
+  it("keeps a non-retryable error without inventing a request ID", () => {
+    const parsed = parsePublicError(
+      { error: "Bad agenda", code: "INVALID_AGENDA", retryable: false },
+      "Fallback"
+    );
+    expect(parsed).toEqual({ message: "Bad agenda", code: "INVALID_AGENDA", retryable: false });
+    expect("requestId" in parsed).toBe(false);
+  });
+
+  it("treats a missing or non-boolean retryable flag as a malformed body", () => {
     for (const retryable of ["true", 1, "yes", undefined, null, {}]) {
-      expect(
-        parsePublicError({ error: "x", code: "UPSTREAM_TIMEOUT", retryable }, "Fallback")
-          .retryable
-      ).toBe(false);
+      expect(parsePublicError({ error: "x", code: "UPSTREAM_TIMEOUT", retryable }, "Fallback"))
+        .toEqual({ message: "Fallback", code: "MALFORMED_RESPONSE", retryable: false });
     }
   });
 
   it("drops request IDs that do not look like opaque identifiers", () => {
     for (const requestId of ["", "has space", "line\nbreak", "x".repeat(129), 42, {}]) {
       const parsed = parsePublicError(
-        { error: "x", code: "UPSTREAM_FAILURE", retryable: true, requestId },
+        { error: "x", code: "INVALID_IDEA", retryable: false, requestId },
         "Fallback"
       );
       expect(parsed.requestId).toBeUndefined();
@@ -159,7 +210,7 @@ describe("parsePublicError", () => {
 
   it("falls back when the message is missing, empty, non-text, or oversized", () => {
     for (const error of [undefined, "", "   ", 12, { message: "nested" }, "x".repeat(401)]) {
-      expect(parsePublicError({ error, code: "INTERNAL_ERROR", retryable: true }, "Fallback"))
+      expect(parsePublicError({ error, code: "INVALID_IDEA", retryable: false }, "Fallback"))
         .toEqual({ message: "Fallback", code: "MALFORMED_RESPONSE", retryable: false });
     }
   });
@@ -176,9 +227,8 @@ describe("parsePublicError", () => {
 });
 
 describe("postJson", () => {
-  it("sends a JSON body with the abort signal and returns parsed data on success", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, { ok: true }));
-    vi.stubGlobal("fetch", fetchMock);
+  it("sends a JSON body with the abort signal and returns the raw parsed data on success", async () => {
+    const fetchMock = stubFetch(jsonResponse(200, { ok: true }));
     const controller = new AbortController();
 
     await expect(postJson("/api/x", { a: 1 }, "Fallback", controller.signal)).resolves.toEqual({
@@ -194,23 +244,20 @@ describe("postJson", () => {
   });
 
   it("maps a typed error body to the client error contract", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue(
-        jsonResponse(503, {
-          error: "Overloaded",
-          code: "UPSTREAM_OVERLOADED",
-          retryable: true,
-          requestId: "req-1"
-        })
-      )
+    stubFetch(
+      jsonResponse(429, {
+        error: "raw",
+        code: "UPSTREAM_RATE_LIMIT",
+        retryable: true,
+        requestId: "req-1"
+      })
     );
 
     await expect(postJson("/api/x", {}, "Fallback")).resolves.toEqual({
       status: "error",
       error: {
-        message: "Overloaded",
-        code: "UPSTREAM_OVERLOADED",
+        message: serviceErrorMessages.UPSTREAM_RATE_LIMIT,
+        code: "UPSTREAM_RATE_LIMIT",
         retryable: true,
         requestId: "req-1"
       }
@@ -240,78 +287,104 @@ describe("postJson", () => {
       ok: true,
       json: () => Promise.reject(new DOMException("Aborted", "AbortError"))
     } as unknown as Response;
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response));
+    stubFetch(response);
 
     await expect(postJson("/api/x", {}, "Fallback")).resolves.toEqual({ status: "aborted" });
   });
 
   it("uses the generic message for non-JSON error bodies", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue(
-        new Response(`<html><pre>${LEAKED.stack}</pre></html>`, {
-          status: 502,
-          headers: { "content-type": "text/html" }
-        })
-      )
+    stubFetch(
+      new Response(`<html><pre>${LEAKED.stack}</pre></html>`, {
+        status: 502,
+        headers: { "content-type": "text/html" }
+      })
     );
 
-    await expect(postJson("/api/x", {}, "Fallback")).resolves.toEqual({
-      status: "error",
-      error: { message: "Fallback", code: "MALFORMED_RESPONSE", retryable: false }
-    });
+    await expect(postJson("/api/x", {}, "Fallback")).resolves.toEqual(
+      malformedOutcome("Fallback")
+    );
   });
 
   it("treats a 200 with a non-JSON body as malformed", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue(new Response("not json", { status: 200 }))
-    );
+    stubFetch(new Response("not json", { status: 200 }));
 
-    await expect(postJson("/api/x", {}, "Fallback")).resolves.toEqual({
-      status: "error",
-      error: { message: "Fallback", code: "MALFORMED_RESPONSE", retryable: false }
-    });
+    await expect(postJson("/api/x", {}, "Fallback")).resolves.toEqual(
+      malformedOutcome("Fallback")
+    );
   });
 });
 
 describe("requestQuickBrief", () => {
-  it("accepts a full Quick Brief body", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(200, demoQuickResult)));
+  it("accepts a full result and the display-only sample", async () => {
+    stubFetch(jsonResponse(200, fullQuickBriefResult));
+    await expect(requestQuickBrief({ idea: "an idea", constraints: [] })).resolves.toEqual({
+      status: "success",
+      data: fullQuickBriefResult
+    });
 
-    const outcome = await requestQuickBrief({ idea: "an idea", constraints: [] });
-    expect(outcome.status).toBe("success");
-    if (outcome.status === "success") {
-      expect(outcome.data.brief.verdict.decision).toBe("validate_before_building");
-    }
+    stubFetch(jsonResponse(200, demoQuickResult));
+    await expect(requestQuickBrief({ idea: "an idea", constraints: [] })).resolves.toEqual({
+      status: "success",
+      data: demoQuickResult
+    });
   });
 
-  it("rejects a 200 whose body does not look like a Quick Brief", async () => {
-    for (const body of [{}, { brief: {} }, { ...demoQuickResult, brief: null }, [], "x"]) {
-      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(200, body)));
-      await expect(requestQuickBrief({ idea: "an idea", constraints: [] })).resolves.toEqual({
-        status: "error",
-        error: {
-          message: QUICK_BRIEF_FALLBACK_MESSAGE,
-          code: "MALFORMED_RESPONSE",
-          retryable: false
-        }
-      });
+  it("rejects a 200 whose body fails deep contract validation", async () => {
+    const withoutEvidenceStatus = structuredClone(fullQuickBriefResult) as unknown as {
+      brief: { evidence: { status?: string } };
+    };
+    delete withoutEvidenceStatus.brief.evidence.status;
+
+    const badVerdict = structuredClone(fullQuickBriefResult);
+    (badVerdict.brief.verdict as { decision: string }).decision = "ship_it";
+
+    const missingThreshold = structuredClone(fullQuickBriefResult) as unknown as {
+      brief: { validationPlan7Days: Array<{ decisionThreshold?: string }> };
+    };
+    delete missingThreshold.brief.validationPlan7Days[0].decisionThreshold;
+
+    const badDiagnostics = structuredClone(fullQuickBriefResult) as unknown as {
+      diagnostics: { modelCallCount: unknown };
+    };
+    badDiagnostics.diagnostics.modelCallCount = "two";
+
+    const badRoute = structuredClone(fullQuickBriefResult) as unknown as {
+      route: { reasonCodes: unknown[] };
+    };
+    badRoute.route.reasonCodes = ["because"];
+
+    const highConfidenceWithoutResearch = structuredClone(fullQuickBriefResult);
+    (highConfidenceWithoutResearch.brief.verdict as { confidence: string }).confidence = "high";
+
+    for (const body of [
+      {},
+      { brief: {} },
+      [],
+      "x",
+      withoutEvidenceStatus,
+      badVerdict,
+      missingThreshold,
+      badDiagnostics,
+      badRoute,
+      highConfidenceWithoutResearch
+    ]) {
+      stubFetch(jsonResponse(200, body));
+      await expect(requestQuickBrief({ idea: "an idea", constraints: [] })).resolves.toEqual(
+        malformedOutcome(QUICK_BRIEF_FALLBACK_MESSAGE)
+      );
     }
   });
 
   it("uses the Quick Brief fallback message for malformed error bodies", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(500, { oops: true })));
+    stubFetch(jsonResponse(500, { oops: true }));
 
-    await expect(requestQuickBrief({ idea: "an idea", constraints: [] })).resolves.toEqual({
-      status: "error",
-      error: { message: QUICK_BRIEF_FALLBACK_MESSAGE, code: "MALFORMED_RESPONSE", retryable: false }
-    });
+    await expect(requestQuickBrief({ idea: "an idea", constraints: [] })).resolves.toEqual(
+      malformedOutcome(QUICK_BRIEF_FALLBACK_MESSAGE)
+    );
   });
 
   it("posts to /api/brief", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, demoQuickResult));
-    vi.stubGlobal("fetch", fetchMock);
+    const fetchMock = stubFetch(jsonResponse(200, demoQuickResult));
 
     await requestQuickBrief({ idea: "an idea", goal: "g", constraints: ["c"] });
     expect(fetchMock.mock.calls[0][0]).toBe("/api/brief");
@@ -323,38 +396,77 @@ describe("requestQuickBrief", () => {
   });
 });
 
-describe("isQuickBriefDisplayResult", () => {
-  it("accepts the shipped sample and rejects partial shapes", () => {
-    expect(isQuickBriefDisplayResult(demoQuickResult)).toBe(true);
-    expect(isQuickBriefDisplayResult({ ...demoQuickResult, frame: undefined })).toBe(false);
-    expect(
-      isQuickBriefDisplayResult({
-        ...demoQuickResult,
-        brief: { ...demoQuickResult.brief, validationPlan7Days: "none" }
-      })
-    ).toBe(false);
-  });
-});
-
 describe("requestAgenda", () => {
-  it("validates the agenda response shape", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(200, { idea: "x", topics: [1] })));
-
-    await expect(requestAgenda({ idea: "x", panelMode: "startup" })).resolves.toEqual({
-      status: "error",
-      error: { message: AGENDA_FALLBACK_MESSAGE, code: "MALFORMED_RESPONSE", retryable: false }
-    });
-  });
-
-  it("returns a well-formed agenda", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue(jsonResponse(200, { idea: "x", topics: ["a", "b", "c"] }))
+  it("returns only the validated fields of a well-formed agenda", async () => {
+    stubFetch(
+      jsonResponse(200, {
+        idea: "x",
+        panelMode: "startup",
+        topics: ["a", "b", "c"],
+        diagnostics: fullQuickBriefResult.diagnostics
+      })
     );
 
     await expect(requestAgenda({ idea: "x", panelMode: "startup" })).resolves.toEqual({
       status: "success",
       data: { idea: "x", topics: ["a", "b", "c"] }
     });
+  });
+
+  it("rejects agendas with the wrong topic count or non-text topics", async () => {
+    for (const topics of [["a", "b"], ["a", "b", 3], "a,b,c", undefined]) {
+      stubFetch(jsonResponse(200, { idea: "x", topics }));
+      await expect(requestAgenda({ idea: "x", panelMode: "startup" })).resolves.toEqual(
+        malformedOutcome(AGENDA_FALLBACK_MESSAGE)
+      );
+    }
+  });
+
+  it("forwards the abort signal", async () => {
+    const fetchMock = stubFetch(jsonResponse(200, { idea: "x", topics: ["a", "b", "c"] }));
+    const controller = new AbortController();
+
+    await requestAgenda({ idea: "x", panelMode: "startup" }, controller.signal);
+    expect(fetchMock.mock.calls[0][1].signal).toBe(controller.signal);
+  });
+});
+
+describe("requestRoundtable", () => {
+  const body = { idea: "x", panelMode: "startup" as const, topics: ["a", "b", "c"] };
+
+  it("accepts the shipped sample roundtable", async () => {
+    stubFetch(jsonResponse(200, demoResult));
+
+    await expect(requestRoundtable(body)).resolves.toEqual({
+      status: "success",
+      data: demoResult
+    });
+  });
+
+  it("rejects results with an incomplete summary or transcript", async () => {
+    const missingSummaryField = structuredClone(demoResult) as unknown as {
+      summary: { recommendedNextStep?: string };
+    };
+    delete missingSummaryField.summary.recommendedNextStep;
+
+    const badTranscript = structuredClone(demoResult) as unknown as {
+      transcript: unknown[];
+    };
+    badTranscript.transcript = [{ round: "one", agentName: "x", content: "y" }];
+
+    for (const result of [missingSummaryField, badTranscript, { ...demoResult, agenda: [] }]) {
+      stubFetch(jsonResponse(200, result));
+      await expect(requestRoundtable(body)).resolves.toEqual(
+        malformedOutcome(ROUNDTABLE_FALLBACK_MESSAGE)
+      );
+    }
+  });
+
+  it("forwards the abort signal", async () => {
+    const fetchMock = stubFetch(jsonResponse(200, demoResult));
+    const controller = new AbortController();
+
+    await requestRoundtable(body, controller.signal);
+    expect(fetchMock.mock.calls[0][1].signal).toBe(controller.signal);
   });
 });
