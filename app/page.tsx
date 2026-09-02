@@ -1,7 +1,15 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { QuickBriefReport } from "@/app/quick-brief-report";
+import { RequestErrorNotice } from "@/app/quick-brief-error";
+import {
+  buildQuickBriefRequest,
+  requestAgenda,
+  requestQuickBrief,
+  requestRoundtable,
+  type ClientError
+} from "@/lib/api-client";
 import { demoIdea } from "@/lib/demo";
 import { demoQuickResult } from "@/lib/v2/demo";
 import {
@@ -37,6 +45,17 @@ const panelOptions: Array<{
   }
 ];
 
+type FailureSource = "quick" | "agenda" | "roundtable";
+
+type Failure = {
+  error: ClientError;
+  /** Which request failed, so "Try again" re-runs the right one with current inputs. */
+  source: FailureSource;
+};
+
+/** Where focus should move after the next commit. Cleared once applied. */
+type FocusTarget = "status" | "result" | "error";
+
 function SummaryList({ title, items }: { title: string; items: string[] }) {
   return (
     <section className="card">
@@ -54,13 +73,6 @@ function panelName(panelMode: PanelMode): string {
   return panelMode === "startup" ? "Startup Validation" : "General Advisory";
 }
 
-function constraintsFromText(value: string): string[] {
-  return value
-    .split("\n")
-    .map((constraint) => constraint.trim())
-    .filter(Boolean);
-}
-
 export default function Home() {
   const [idea, setIdea] = useState("");
   const [goal, setGoal] = useState("");
@@ -70,17 +82,53 @@ export default function Home() {
   const [quickResult, setQuickResult] = useState<QuickBriefDisplayResult | null>(null);
   const [quickResultSource, setQuickResultSource] = useState<"live" | "sample" | null>(null);
   const [roundtableResult, setRoundtableResult] = useState<RoundtableResult | null>(null);
-  const [error, setError] = useState("");
+  const [failure, setFailure] = useState<Failure | null>(null);
   const [isRunningQuick, setIsRunningQuick] = useState(false);
   const [isPreparing, setIsPreparing] = useState(false);
   const [isRunningRoundtable, setIsRunningRoundtable] = useState(false);
+  const [pendingFocus, setPendingFocus] = useState<FocusTarget | null>(null);
+
+  // The in-flight Quick Brief request. Any action that makes the current inputs
+  // or result stale aborts it; a response whose controller is no longer the
+  // current one is ignored so it can never overwrite newer UI state.
+  const quickRequestRef = useRef<AbortController | null>(null);
+  const statusRef = useRef<HTMLElement>(null);
+  const resultRef = useRef<HTMLElement>(null);
+  const errorRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!pendingFocus) return;
+    const target =
+      pendingFocus === "status"
+        ? statusRef.current
+        : pendingFocus === "result"
+          ? resultRef.current
+          : errorRef.current;
+    target?.focus();
+    setPendingFocus(null);
+  }, [pendingFocus]);
+
+  useEffect(() => {
+    return () => {
+      quickRequestRef.current?.abort();
+    };
+  }, []);
+
+  function cancelQuickBrief() {
+    const pending = quickRequestRef.current;
+    if (!pending) return;
+    quickRequestRef.current = null;
+    pending.abort();
+    setIsRunningQuick(false);
+  }
 
   function resetAllResults() {
+    cancelQuickBrief();
     setAgenda(null);
     setQuickResult(null);
     setQuickResultSource(null);
     setRoundtableResult(null);
-    setError("");
+    setFailure(null);
   }
 
   function chooseExample(example: string) {
@@ -94,10 +142,11 @@ export default function Home() {
     setPanelMode(nextPanel);
     setAgenda(null);
     setRoundtableResult(null);
-    setError("");
+    setFailure(null);
   }
 
   function viewSampleBrief() {
+    cancelQuickBrief();
     setIdea(demoIdea);
     setGoal("Decide whether this should become a product or remain a personal tool.");
     setConstraintsText("Reduce screen time\nDo not compromise application-tracker accuracy");
@@ -105,67 +154,63 @@ export default function Home() {
     setRoundtableResult(null);
     setQuickResult(demoQuickResult);
     setQuickResultSource("sample");
-    setError("");
+    setFailure(null);
+    setPendingFocus("result");
   }
 
-  async function generateQuickBrief(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setError("");
+  async function submitQuickBrief() {
+    if (quickRequestRef.current || isPreparing || isRunningRoundtable) return;
+
+    const controller = new AbortController();
+    quickRequestRef.current = controller;
+    setFailure(null);
     setAgenda(null);
     setRoundtableResult(null);
     setQuickResult(null);
     setQuickResultSource(null);
     setIsRunningQuick(true);
+    setPendingFocus("status");
 
-    try {
-      const response = await fetch("/api/brief", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          idea,
-          goal: goal.trim() || undefined,
-          constraints: constraintsFromText(constraintsText)
-        })
-      });
-      const data = await response.json();
+    const outcome = await requestQuickBrief(
+      buildQuickBriefRequest(idea, goal, constraintsText),
+      controller.signal
+    );
 
-      if (!response.ok) {
-        throw new Error(data.error || "The Quick Brief could not be completed.");
-      }
+    // Cancelled or superseded while waiting: leave the current UI untouched.
+    if (quickRequestRef.current !== controller) return;
+    quickRequestRef.current = null;
+    setIsRunningQuick(false);
 
-      setQuickResult(data as QuickBriefDisplayResult);
+    if (outcome.status === "success") {
+      setQuickResult(outcome.data);
       setQuickResultSource("live");
-    } catch (caughtError) {
-      setError(caughtError instanceof Error ? caughtError.message : "Unexpected error.");
-    } finally {
-      setIsRunningQuick(false);
+      setPendingFocus("result");
+    } else if (outcome.status === "error") {
+      setFailure({ error: outcome.error, source: "quick" });
+      setPendingFocus("error");
     }
   }
 
+  function handleQuickBriefSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    void submitQuickBrief();
+  }
+
   async function prepareFullAgenda() {
-    setError("");
+    setFailure(null);
     setAgenda(null);
     setRoundtableResult(null);
     setIsPreparing(true);
 
-    try {
-      const response = await fetch("/api/agenda", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ idea, panelMode })
-      });
-      const data = await response.json();
+    const outcome = await requestAgenda({ idea, panelMode });
+    setIsPreparing(false);
 
-      if (!response.ok) {
-        throw new Error(data.error || "The Full Roundtable agenda could not be prepared.");
-      }
-
-      setIdea(data.idea);
-      setAgenda(data.topics);
-    } catch (caughtError) {
-      setError(caughtError instanceof Error ? caughtError.message : "Unexpected error.");
-    } finally {
-      setIsPreparing(false);
+    if (outcome.status === "success") {
+      setIdea(outcome.data.idea);
+      setAgenda(outcome.data.topics);
+    } else if (outcome.status === "error") {
+      setFailure({ error: outcome.error, source: "agenda" });
+      setPendingFocus("error");
     }
   }
 
@@ -195,27 +240,29 @@ export default function Home() {
   async function conveneRoundtable() {
     if (!agenda) return;
 
-    setError("");
+    setFailure(null);
     setRoundtableResult(null);
     setIsRunningRoundtable(true);
 
-    try {
-      const response = await fetch("/api/roundtable", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ idea, panelMode, topics: agenda })
-      });
-      const data = await response.json();
+    const outcome = await requestRoundtable({ idea, panelMode, topics: agenda });
+    setIsRunningRoundtable(false);
 
-      if (!response.ok) {
-        throw new Error(data.error || "The Full Roundtable could not finish.");
-      }
+    if (outcome.status === "success") {
+      setRoundtableResult(outcome.data);
+    } else if (outcome.status === "error") {
+      setFailure({ error: outcome.error, source: "roundtable" });
+      setPendingFocus("error");
+    }
+  }
 
-      setRoundtableResult(data as RoundtableResult);
-    } catch (caughtError) {
-      setError(caughtError instanceof Error ? caughtError.message : "Unexpected error.");
-    } finally {
-      setIsRunningRoundtable(false);
+  function retryFailedRequest() {
+    if (!failure) return;
+    if (failure.source === "quick") {
+      void submitQuickBrief();
+    } else if (failure.source === "agenda") {
+      void prepareFullAgenda();
+    } else {
+      void conveneRoundtable();
     }
   }
 
@@ -275,7 +322,7 @@ export default function Home() {
           </div>
         </section>
       ) : (
-        <form className="inputPanel" onSubmit={generateQuickBrief}>
+        <form className="inputPanel" onSubmit={handleQuickBriefSubmit}>
           <div className="stepLabel">Quick Brief · default</div>
           <h2>Frame the idea once</h2>
 
@@ -330,7 +377,7 @@ export default function Home() {
             </div>
           </div>
 
-          <div className="exampleRow" aria-label="Example ideas">
+          <div className="exampleRow" role="group" aria-label="Example ideas">
             {examples.map((example) => (
               <button key={example} type="button" onClick={() => chooseExample(example)}>
                 {example}
@@ -383,9 +430,15 @@ export default function Home() {
       )}
 
       {isRunningQuick ? (
-        <section className="processPanel" aria-live="polite">
+        <section
+          className="processPanel"
+          role="status"
+          aria-labelledby="quick-brief-progress-title"
+          tabIndex={-1}
+          ref={statusRef}
+        >
           <div className="stepLabel">Quick Brief</div>
-          <h2>Turning the idea into a pre-build decision</h2>
+          <h2 id="quick-brief-progress-title">Turning the idea into a pre-build decision</h2>
           <p>
             The Planner is extracting assumptions and unknowns before a bounded brief writer
             produces the verdict. External research is not run in this milestone.
@@ -398,10 +451,13 @@ export default function Home() {
         </section>
       ) : null}
 
-      {error ? <p className="error" role="alert">{error}</p> : null}
+      {failure ? (
+        <RequestErrorNotice ref={errorRef} error={failure.error} onRetry={retryFailedRequest} />
+      ) : null}
 
       {quickResult && quickResultSource ? (
         <QuickBriefReport
+          ref={resultRef}
           result={quickResult}
           idea={idea}
           source={quickResultSource}

@@ -9,6 +9,7 @@
   --accent: #205c4a;
   --accent-strong: #153d32;
   --warning: #9f2f27;
+  --focus-ring: #153d32;
   --shadow: 0 20px 60px rgba(30, 27, 22, 0.08);
 }
 
@@ -30,6 +31,24 @@ button,
 textarea,
 input {
   font: inherit;
+}
+
+/*
+ * One keyboard focus indicator for every interactive element and every
+ * programmatic focus target (results, error, progress). The ring is drawn
+ * outside the element on the page background, so it stays visible on dark
+ * panels and on the filled primary button as well. Mouse focus on buttons
+ * does not match :focus-visible, so pointer users are not shown the ring.
+ */
+:focus-visible {
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 3px;
+}
+
+/* These disclosure headers sit inside overflow-hidden cards; keep the ring inside. */
+.transcript summary:focus-visible,
+.diagnostics summary:focus-visible {
+  outline-offset: -4px;
 }
 
 .shell {
@@ -201,7 +220,6 @@ textarea {
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 16px;
-  outline: none;
   background: #fffdfa;
   color: var(--ink);
   line-height: 1.5;
@@ -243,7 +261,6 @@ input {
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 12px 14px;
-  outline: none;
   background: #fffdfa;
   color: var(--ink);
 }
@@ -373,9 +390,26 @@ input:focus {
   border: 1px solid rgba(159, 47, 39, 0.25);
   border-radius: 8px;
   background: rgba(159, 47, 39, 0.07);
+  padding: 14px 16px;
+}
+
+.errorMessage {
+  margin: 0;
   color: var(--warning);
   font-weight: 700;
-  padding: 14px 16px;
+  line-height: 1.45;
+}
+
+.errorActions {
+  margin-top: 12px;
+}
+
+.errorReference {
+  margin: 12px 0 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 600;
+  overflow-wrap: anywhere;
 }
 
 .agendaHeader {

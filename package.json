@@ -9,6 +9,8 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:browser": "playwright test",
+    "test:browser:install": "playwright install chromium",
     "eval": "RUN_LIVE_EVALS=true vitest run evals/roundtable.eval.test.ts",
     "eval:smoke": "RUN_LIVE_EVALS=true EVAL_CASE_LIMIT=1 vitest run evals/roundtable.eval.test.ts",
     "eval:v2": "RUN_V2_LIVE_EVALS=true vitest run evals/adaptive.eval.test.ts",
@@ -20,6 +22,8 @@
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.13.0",
+    "@playwright/test": "^1.62.1",
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",

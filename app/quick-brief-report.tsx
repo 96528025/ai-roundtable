@@ -1,3 +1,4 @@
+import type { Ref } from "react";
 import type { QuickBriefDisplayResult, VerdictDecision } from "@/lib/v2/types";
 
 const verdictLabels: Record<VerdictDecision, string> = {
@@ -25,17 +26,20 @@ export function QuickBriefReport({
   result,
   idea,
   source,
-  onPrepareFull
+  onPrepareFull,
+  ref
 }: {
   result: QuickBriefDisplayResult;
   idea: string;
   source: "live" | "sample";
   onPrepareFull?: () => void;
+  /** Focus target once a result appears; the region is not in the Tab order. */
+  ref?: Ref<HTMLElement>;
 }) {
   const { brief } = result;
 
   return (
-    <section className="results" aria-label="Quick Brief result">
+    <section className="results" aria-label="Quick Brief result" tabIndex={-1} ref={ref}>
       <div className="meetingContext">
         {source === "sample" ? <span>Illustrative sample · no model call</span> : null}
         <span>Quick Brief</span>

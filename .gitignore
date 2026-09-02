@@ -4,3 +4,9 @@ node_modules
 data/meetings.json
 npm-debug.log*
 tsconfig.tsbuildinfo
+
+# Playwright output
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
