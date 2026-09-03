@@ -1,18 +1,25 @@
-export type AppErrorCode =
-  | "INVALID_REQUEST"
-  | "INVALID_IDEA"
-  | "INVALID_AGENDA"
-  | "SERVICE_CONFIGURATION"
-  | "UPSTREAM_AUTHENTICATION"
-  | "UPSTREAM_RATE_LIMIT"
-  | "UPSTREAM_TIMEOUT"
-  | "UPSTREAM_OVERLOADED"
-  | "UPSTREAM_FAILURE"
-  | "UPSTREAM_NETWORK"
-  | "INVALID_MODEL_RESPONSE"
-  | "BUDGET_EXHAUSTED"
-  | "LIVE_MODE_DISABLED"
-  | "INTERNAL_ERROR";
+export const appErrorCodes = [
+  "INVALID_REQUEST",
+  "INVALID_IDEA",
+  "INVALID_AGENDA",
+  "SERVICE_CONFIGURATION",
+  "UPSTREAM_AUTHENTICATION",
+  "UPSTREAM_RATE_LIMIT",
+  "UPSTREAM_TIMEOUT",
+  "UPSTREAM_OVERLOADED",
+  "UPSTREAM_FAILURE",
+  "UPSTREAM_NETWORK",
+  "INVALID_MODEL_RESPONSE",
+  "BUDGET_EXHAUSTED",
+  "LIVE_MODE_DISABLED",
+  "INTERNAL_ERROR"
+] as const;
+
+export type AppErrorCode = (typeof appErrorCodes)[number];
+
+export function isAppErrorCode(value: unknown): value is AppErrorCode {
+  return typeof value === "string" && (appErrorCodes as readonly string[]).includes(value);
+}
 
 type AppErrorOptions = {
   code: AppErrorCode;

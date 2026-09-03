@@ -70,6 +70,22 @@ describe("moderator synthesis resampling", () => {
     expect(result.diagnostics?.failedModelCalls).toBe(0);
   });
 
+  it("resamples when a summary violates the shared rendered-response contract", async () => {
+    vi.stubEnv("ANTHROPIC_API_KEY", "test-key");
+    const invalidReport = JSON.stringify({
+      ...JSON.parse(validReport),
+      consensus: [42]
+    });
+    const fetchMock = stubRoundtable([{ text: invalidReport }, { text: validReport }]);
+
+    const result = await runRoundtable(idea, topics, "startup");
+
+    expect(result.summary.consensus).toEqual([
+      "Start with one neighbourhood and a single weekly delivery window."
+    ]);
+    expect(fetchMock).toHaveBeenCalledTimes(17);
+  });
+
   it("records the truncation signal so the cause is visible in diagnostics", async () => {
     vi.stubEnv("ANTHROPIC_API_KEY", "test-key");
     const infoSpy = vi.spyOn(console, "info").mockImplementation(() => {});

@@ -1,7 +1,18 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useRef, useState, type RefObject } from "react";
 import { QuickBriefReport } from "@/app/quick-brief-report";
+import { RequestErrorNotice } from "@/app/quick-brief-error";
+import { ResultErrorBoundary } from "@/app/result-error-boundary";
+import {
+  QUICK_BRIEF_FALLBACK_MESSAGE,
+  ROUNDTABLE_FALLBACK_MESSAGE,
+  buildQuickBriefRequest,
+  requestAgenda,
+  requestQuickBrief,
+  requestRoundtable,
+  type ClientError
+} from "@/lib/api-client";
 import { demoIdea } from "@/lib/demo";
 import { demoQuickResult } from "@/lib/v2/demo";
 import {
@@ -37,6 +48,40 @@ const panelOptions: Array<{
   }
 ];
 
+type FailureSource = "quick" | "agenda" | "roundtable";
+
+type Failure = {
+  error: ClientError;
+  /** Which request failed, so "Try again" re-runs the right one with current inputs. */
+  source: FailureSource;
+};
+
+/** Where focus should move after the next commit. Cleared once applied. */
+type FocusTarget = "status" | "result" | "error";
+
+/**
+ * One in-flight request per workflow. The controller stored in the ref is the
+ * request's identity: after every `await`, a continuation compares itself to
+ * the ref before touching any state, so a superseded or cancelled request can
+ * never write loading, result, failure, or focus state.
+ */
+type RequestRef = RefObject<AbortController | null>;
+
+function beginRequest(ref: RequestRef): AbortController {
+  const controller = new AbortController();
+  ref.current = controller;
+  return controller;
+}
+
+/** Invalidate first, then abort, so the continuation already sees itself as stale. */
+function cancelRequest(ref: RequestRef): boolean {
+  const pending = ref.current;
+  if (!pending) return false;
+  ref.current = null;
+  pending.abort();
+  return true;
+}
+
 function SummaryList({ title, items }: { title: string; items: string[] }) {
   return (
     <section className="card">
@@ -54,13 +99,6 @@ function panelName(panelMode: PanelMode): string {
   return panelMode === "startup" ? "Startup Validation" : "General Advisory";
 }
 
-function constraintsFromText(value: string): string[] {
-  return value
-    .split("\n")
-    .map((constraint) => constraint.trim())
-    .filter(Boolean);
-}
-
 export default function Home() {
   const [idea, setIdea] = useState("");
   const [goal, setGoal] = useState("");
@@ -70,17 +108,97 @@ export default function Home() {
   const [quickResult, setQuickResult] = useState<QuickBriefDisplayResult | null>(null);
   const [quickResultSource, setQuickResultSource] = useState<"live" | "sample" | null>(null);
   const [roundtableResult, setRoundtableResult] = useState<RoundtableResult | null>(null);
-  const [error, setError] = useState("");
+  const [failure, setFailure] = useState<Failure | null>(null);
   const [isRunningQuick, setIsRunningQuick] = useState(false);
   const [isPreparing, setIsPreparing] = useState(false);
   const [isRunningRoundtable, setIsRunningRoundtable] = useState(false);
+  const [pendingFocus, setPendingFocus] = useState<FocusTarget | null>(null);
+  // Kept per result surface so recovering one boundary cannot remount another.
+  // The Quick epoch also permits re-showing the same sample object after a fault.
+  const [quickResultEpoch, setQuickResultEpoch] = useState(0);
+  const [roundtableResultEpoch, setRoundtableResultEpoch] = useState(0);
+  // Set from an effect, so it is present only once React has hydrated the page.
+  const [hydrated, setHydrated] = useState(false);
+
+  const quickRequestRef = useRef<AbortController | null>(null);
+  const agendaRequestRef = useRef<AbortController | null>(null);
+  const roundtableRequestRef = useRef<AbortController | null>(null);
+  const statusRef = useRef<HTMLElement>(null);
+  const resultRef = useRef<HTMLElement>(null);
+  const errorRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!pendingFocus) return;
+    const target =
+      pendingFocus === "status"
+        ? statusRef.current
+        : pendingFocus === "result"
+          ? resultRef.current
+          : errorRef.current;
+    // A result boundary may still be showing its fallback during this commit.
+    // Keep the request pending until the intended target actually mounts; a
+    // new result epoch reruns this effect after the boundary is replaced.
+    if (!target) return;
+    target.focus();
+    setPendingFocus(null);
+  }, [pendingFocus, quickResultEpoch]);
+
+  useEffect(() => {
+    setHydrated(true);
+  }, []);
+
+  useEffect(() => {
+    const refs = [quickRequestRef, agendaRequestRef, roundtableRequestRef];
+    return () => {
+      // Invalidate every identity before aborting so no continuation updates
+      // state after unmount.
+      const pending = refs.map((ref) => {
+        const controller = ref.current;
+        ref.current = null;
+        return controller;
+      });
+      pending.forEach((controller) => controller?.abort());
+    };
+  }, []);
+
+  /** Synchronous guard: at most one workflow runs at a time, even within one tick. */
+  function requestInFlight(): boolean {
+    return Boolean(
+      quickRequestRef.current || agendaRequestRef.current || roundtableRequestRef.current
+    );
+  }
+
+  function cancelQuickBrief() {
+    if (cancelRequest(quickRequestRef)) setIsRunningQuick(false);
+  }
+
+  function cancelAgenda() {
+    if (cancelRequest(agendaRequestRef)) setIsPreparing(false);
+  }
+
+  function cancelRoundtable() {
+    if (cancelRequest(roundtableRequestRef)) setIsRunningRoundtable(false);
+  }
+
+  function cancelAllRequests() {
+    cancelQuickBrief();
+    cancelAgenda();
+    cancelRoundtable();
+  }
+
+  /** A roundtable error describes the previous agenda; editing the agenda retires it. */
+  function clearRoundtableFailure() {
+    setFailure((current) => (current?.source === "roundtable" ? null : current));
+  }
 
   function resetAllResults() {
+    cancelAllRequests();
     setAgenda(null);
     setQuickResult(null);
     setQuickResultSource(null);
     setRoundtableResult(null);
-    setError("");
+    setFailure(null);
+    setPendingFocus(null);
   }
 
   function chooseExample(example: string) {
@@ -91,13 +209,18 @@ export default function Home() {
   }
 
   function choosePanel(nextPanel: PanelMode) {
+    if (nextPanel === panelMode) return;
     setPanelMode(nextPanel);
+    // The panel only shapes Full Roundtable work; a pending Quick Brief stays valid.
+    cancelAgenda();
+    cancelRoundtable();
     setAgenda(null);
     setRoundtableResult(null);
-    setError("");
+    setFailure(null);
   }
 
   function viewSampleBrief() {
+    cancelAllRequests();
     setIdea(demoIdea);
     setGoal("Decide whether this should become a product or remain a personal tool.");
     setConstraintsText("Reduce screen time\nDo not compromise application-tracker accuracy");
@@ -105,71 +228,78 @@ export default function Home() {
     setRoundtableResult(null);
     setQuickResult(demoQuickResult);
     setQuickResultSource("sample");
-    setError("");
+    setFailure(null);
+    setQuickResultEpoch((epoch) => epoch + 1);
+    setPendingFocus("result");
   }
 
-  async function generateQuickBrief(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setError("");
+  async function submitQuickBrief() {
+    if (requestInFlight()) return;
+
+    const controller = beginRequest(quickRequestRef);
+    setFailure(null);
     setAgenda(null);
     setRoundtableResult(null);
     setQuickResult(null);
     setQuickResultSource(null);
     setIsRunningQuick(true);
+    setPendingFocus("status");
 
-    try {
-      const response = await fetch("/api/brief", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          idea,
-          goal: goal.trim() || undefined,
-          constraints: constraintsFromText(constraintsText)
-        })
-      });
-      const data = await response.json();
+    const outcome = await requestQuickBrief(
+      buildQuickBriefRequest(idea, goal, constraintsText),
+      controller.signal
+    );
 
-      if (!response.ok) {
-        throw new Error(data.error || "The Quick Brief could not be completed.");
-      }
+    // Cancelled or superseded while waiting: leave the current UI untouched.
+    if (quickRequestRef.current !== controller) return;
+    quickRequestRef.current = null;
+    setIsRunningQuick(false);
 
-      setQuickResult(data as QuickBriefDisplayResult);
+    if (outcome.status === "success") {
+      setQuickResult(outcome.data);
       setQuickResultSource("live");
-    } catch (caughtError) {
-      setError(caughtError instanceof Error ? caughtError.message : "Unexpected error.");
-    } finally {
-      setIsRunningQuick(false);
+      setQuickResultEpoch((epoch) => epoch + 1);
+      setPendingFocus("result");
+    } else if (outcome.status === "error") {
+      setFailure({ error: outcome.error, source: "quick" });
+      setPendingFocus("error");
     }
   }
 
+  function handleQuickBriefSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    void submitQuickBrief();
+  }
+
   async function prepareFullAgenda() {
-    setError("");
+    if (requestInFlight()) return;
+
+    const controller = beginRequest(agendaRequestRef);
+    setPendingFocus(null);
+    setFailure(null);
     setAgenda(null);
     setRoundtableResult(null);
     setIsPreparing(true);
 
-    try {
-      const response = await fetch("/api/agenda", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ idea, panelMode })
-      });
-      const data = await response.json();
+    const outcome = await requestAgenda({ idea, panelMode }, controller.signal);
 
-      if (!response.ok) {
-        throw new Error(data.error || "The Full Roundtable agenda could not be prepared.");
-      }
+    // Cancelled or superseded while waiting: leave the current UI untouched.
+    if (agendaRequestRef.current !== controller) return;
+    agendaRequestRef.current = null;
+    setIsPreparing(false);
 
-      setIdea(data.idea);
-      setAgenda(data.topics);
-    } catch (caughtError) {
-      setError(caughtError instanceof Error ? caughtError.message : "Unexpected error.");
-    } finally {
-      setIsPreparing(false);
+    if (outcome.status === "success") {
+      setIdea(outcome.data.idea);
+      setAgenda(outcome.data.topics);
+    } else if (outcome.status === "error") {
+      setFailure({ error: outcome.error, source: "agenda" });
+      setPendingFocus("error");
     }
   }
 
   function updateTopic(index: number, value: string) {
+    cancelRoundtable();
+    clearRoundtableFailure();
     setRoundtableResult(null);
     setAgenda((current) =>
       current?.map((topic, topicIndex) => (topicIndex === index ? value : topic)) ?? null
@@ -177,6 +307,8 @@ export default function Home() {
   }
 
   function removeTopic(index: number) {
+    cancelRoundtable();
+    clearRoundtableFailure();
     setRoundtableResult(null);
     setAgenda((current) => {
       if (!current || current.length <= 3) return current;
@@ -185,6 +317,8 @@ export default function Home() {
   }
 
   function addTopic() {
+    cancelRoundtable();
+    clearRoundtableFailure();
     setRoundtableResult(null);
     setAgenda((current) => {
       if (!current || current.length >= 5) return current;
@@ -193,29 +327,41 @@ export default function Home() {
   }
 
   async function conveneRoundtable() {
-    if (!agenda) return;
+    if (!agenda || requestInFlight()) return;
 
-    setError("");
+    const controller = beginRequest(roundtableRequestRef);
+    setPendingFocus(null);
+    setFailure(null);
     setRoundtableResult(null);
     setIsRunningRoundtable(true);
 
-    try {
-      const response = await fetch("/api/roundtable", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ idea, panelMode, topics: agenda })
-      });
-      const data = await response.json();
+    const outcome = await requestRoundtable(
+      { idea, panelMode, topics: agenda },
+      controller.signal
+    );
 
-      if (!response.ok) {
-        throw new Error(data.error || "The Full Roundtable could not finish.");
-      }
+    // Cancelled or superseded while waiting: leave the current UI untouched.
+    if (roundtableRequestRef.current !== controller) return;
+    roundtableRequestRef.current = null;
+    setIsRunningRoundtable(false);
 
-      setRoundtableResult(data as RoundtableResult);
-    } catch (caughtError) {
-      setError(caughtError instanceof Error ? caughtError.message : "Unexpected error.");
-    } finally {
-      setIsRunningRoundtable(false);
+    if (outcome.status === "success") {
+      setRoundtableResult(outcome.data);
+      setRoundtableResultEpoch((epoch) => epoch + 1);
+    } else if (outcome.status === "error") {
+      setFailure({ error: outcome.error, source: "roundtable" });
+      setPendingFocus("error");
+    }
+  }
+
+  function retryFailedRequest() {
+    if (!failure) return;
+    if (failure.source === "quick") {
+      void submitQuickBrief();
+    } else if (failure.source === "agenda") {
+      void prepareFullAgenda();
+    } else {
+      void conveneRoundtable();
     }
   }
 
@@ -233,7 +379,7 @@ export default function Home() {
   const isBusy = isRunningQuick || isPreparing || isRunningRoundtable;
 
   return (
-    <main className="shell">
+    <main className="shell" data-hydrated={hydrated ? "true" : undefined}>
       <section className="hero">
         <p className="eyebrow">Evidence-aware pre-build decisions</p>
         <h1>AI Roundtable</h1>
@@ -245,7 +391,7 @@ export default function Home() {
 
       {publicDemoOnly ? (
         <section className="inputPanel publicDemoPanel" aria-labelledby="public-demo-title">
-          <div className="stepLabel">Public portfolio demo</div>
+          <div className="stepLabel">Public sample demo</div>
           <h2 id="public-demo-title">Review a sample pre-build decision</h2>
           <p>
             This deployment is sample-only. It uses a pre-generated Quick Brief so the full
@@ -275,7 +421,7 @@ export default function Home() {
           </div>
         </section>
       ) : (
-        <form className="inputPanel" onSubmit={generateQuickBrief}>
+        <form className="inputPanel" onSubmit={handleQuickBriefSubmit}>
           <div className="stepLabel">Quick Brief · default</div>
           <h2>Frame the idea once</h2>
 
@@ -330,7 +476,7 @@ export default function Home() {
             </div>
           </div>
 
-          <div className="exampleRow" aria-label="Example ideas">
+          <div className="exampleRow" role="group" aria-label="Example ideas">
             {examples.map((example) => (
               <button key={example} type="button" onClick={() => chooseExample(example)}>
                 {example}
@@ -383,9 +529,15 @@ export default function Home() {
       )}
 
       {isRunningQuick ? (
-        <section className="processPanel" aria-live="polite">
+        <section
+          className="processPanel"
+          role="status"
+          aria-labelledby="quick-brief-progress-title"
+          tabIndex={-1}
+          ref={statusRef}
+        >
           <div className="stepLabel">Quick Brief</div>
-          <h2>Turning the idea into a pre-build decision</h2>
+          <h2 id="quick-brief-progress-title">Turning the idea into a pre-build decision</h2>
           <p>
             The Planner is extracting assumptions and unknowns before a bounded brief writer
             produces the verdict. External research is not run in this milestone.
@@ -398,17 +550,22 @@ export default function Home() {
         </section>
       ) : null}
 
-      {error ? <p className="error" role="alert">{error}</p> : null}
+      {failure ? (
+        <RequestErrorNotice ref={errorRef} error={failure.error} onRetry={retryFailedRequest} />
+      ) : null}
 
       {quickResult && quickResultSource ? (
-        <QuickBriefReport
-          result={quickResult}
-          idea={idea}
-          source={quickResultSource}
-          onPrepareFull={
-            publicDemoOnly || isBusy || !ideaIsValid ? undefined : prepareFullAgenda
-          }
-        />
+        <ResultErrorBoundary key={quickResultEpoch} fallbackMessage={QUICK_BRIEF_FALLBACK_MESSAGE}>
+          <QuickBriefReport
+            ref={resultRef}
+            result={quickResult}
+            idea={idea}
+            source={quickResultSource}
+            onPrepareFull={
+              publicDemoOnly || isBusy || !ideaIsValid ? undefined : prepareFullAgenda
+            }
+          />
+        </ResultErrorBoundary>
       ) : null}
 
       {agenda ? (
@@ -487,96 +644,101 @@ export default function Home() {
       ) : null}
 
       {roundtableResult ? (
-        <section className="results" aria-label="Full Roundtable result">
-          <div className="meetingContext">
-            <span>Full Roundtable · fixed baseline</span>
-            <span>{panelName(roundtableResult.panelMode)}</span>
-            <span>{roundtableResult.agenda.length} approved topics</span>
-            <span>{roundtableResult.transcript.length} agent turns</span>
-            {roundtableResult.diagnostics ? (
-              <span>{roundtableResult.diagnostics.modelCallCount} observed call attempts</span>
-            ) : null}
-          </div>
-          <section className="ideaContext" aria-label="Idea under review">
-            <span>Idea under review</span>
-            <p>{idea}</p>
-          </section>
-          <section className="summaryHero">
-            <span>Moderator Summary</span>
-            <p>{roundtableResult.summary.executiveSummary}</p>
-          </section>
-
-          <div className="summaryGrid">
-            <SummaryList title="Consensus" items={roundtableResult.summary.consensus} />
-            <SummaryList
-              title="Key Disagreements"
-              items={roundtableResult.summary.disagreements}
-            />
-            <SummaryList title="Biggest Risks" items={roundtableResult.summary.risks} />
-            <section className="card">
-              <h3>Recommended Next Step</h3>
-              <p>{roundtableResult.summary.recommendedNextStep}</p>
-            </section>
-            <section className="card questionCard">
-              <h3>One Follow-up Question</h3>
-              <p>{roundtableResult.summary.followUpQuestion}</p>
-            </section>
-          </div>
-
-          <details className="transcript">
-            <summary>Show Internal Debate</summary>
-            <div className="transcriptList">
-              {roundtableResult.transcript.map((entry, index) => (
-                <article
-                  key={`${entry.round}-${entry.agentName}-${index}`}
-                  className="transcriptEntry"
-                >
-                  <div>
-                    <span>Round {entry.round}</span>
-                    <strong>{entry.agentName}</strong>
-                  </div>
-                  <p>{entry.content}</p>
-                </article>
-              ))}
+        <ResultErrorBoundary
+          key={roundtableResultEpoch}
+          fallbackMessage={ROUNDTABLE_FALLBACK_MESSAGE}
+        >
+          <section className="results" aria-label="Full Roundtable result">
+            <div className="meetingContext">
+              <span>Full Roundtable · fixed baseline</span>
+              <span>{panelName(roundtableResult.panelMode)}</span>
+              <span>{roundtableResult.agenda.length} approved topics</span>
+              <span>{roundtableResult.transcript.length} agent turns</span>
+              {roundtableResult.diagnostics ? (
+                <span>{roundtableResult.diagnostics.modelCallCount} observed call attempts</span>
+              ) : null}
             </div>
-          </details>
+            <section className="ideaContext" aria-label="Idea under review">
+              <span>Idea under review</span>
+              <p>{idea}</p>
+            </section>
+            <section className="summaryHero">
+              <span>Moderator Summary</span>
+              <p>{roundtableResult.summary.executiveSummary}</p>
+            </section>
 
-          {roundtableResult.diagnostics ? (
-            <details className="diagnostics">
-              <summary>Show Run Diagnostics</summary>
-              <dl>
-                <div>
-                  <dt>Run ID</dt>
-                  <dd>{roundtableResult.diagnostics.runId}</dd>
-                </div>
-                <div>
-                  <dt>Duration</dt>
-                  <dd>{(roundtableResult.diagnostics.durationMs / 1000).toFixed(1)} seconds</dd>
-                </div>
-                <div>
-                  <dt>Call attempts</dt>
-                  <dd>
-                    {roundtableResult.diagnostics.successfulModelCalls} succeeded ·{" "}
-                    {roundtableResult.diagnostics.failedModelCalls} failed ·{" "}
-                    {roundtableResult.diagnostics.retryCount} retries
-                  </dd>
-                </div>
-                <div>
-                  <dt>Model</dt>
-                  <dd>{roundtableResult.diagnostics.models.join(", ") || "Unavailable"}</dd>
-                </div>
-                <div>
-                  <dt>Tokens</dt>
-                  <dd>
-                    {roundtableResult.diagnostics.inputTokens ?? "Unavailable"} input ·{" "}
-                    {roundtableResult.diagnostics.outputTokens ?? "Unavailable"} output
-                  </dd>
-                </div>
-              </dl>
-              <p>Diagnostics exclude the idea, prompts, and transcript content.</p>
+            <div className="summaryGrid">
+              <SummaryList title="Consensus" items={roundtableResult.summary.consensus} />
+              <SummaryList
+                title="Key Disagreements"
+                items={roundtableResult.summary.disagreements}
+              />
+              <SummaryList title="Biggest Risks" items={roundtableResult.summary.risks} />
+              <section className="card">
+                <h3>Recommended Next Step</h3>
+                <p>{roundtableResult.summary.recommendedNextStep}</p>
+              </section>
+              <section className="card questionCard">
+                <h3>One Follow-up Question</h3>
+                <p>{roundtableResult.summary.followUpQuestion}</p>
+              </section>
+            </div>
+
+            <details className="transcript">
+              <summary>Show Internal Debate</summary>
+              <div className="transcriptList">
+                {roundtableResult.transcript.map((entry, index) => (
+                  <article
+                    key={`${entry.round}-${entry.agentName}-${index}`}
+                    className="transcriptEntry"
+                  >
+                    <div>
+                      <span>Round {entry.round}</span>
+                      <strong>{entry.agentName}</strong>
+                    </div>
+                    <p>{entry.content}</p>
+                  </article>
+                ))}
+              </div>
             </details>
-          ) : null}
-        </section>
+
+            {roundtableResult.diagnostics ? (
+              <details className="diagnostics">
+                <summary>Show Run Diagnostics</summary>
+                <dl>
+                  <div>
+                    <dt>Run ID</dt>
+                    <dd>{roundtableResult.diagnostics.runId}</dd>
+                  </div>
+                  <div>
+                    <dt>Duration</dt>
+                    <dd>{(roundtableResult.diagnostics.durationMs / 1000).toFixed(1)} seconds</dd>
+                  </div>
+                  <div>
+                    <dt>Call attempts</dt>
+                    <dd>
+                      {roundtableResult.diagnostics.successfulModelCalls} succeeded ·{" "}
+                      {roundtableResult.diagnostics.failedModelCalls} failed ·{" "}
+                      {roundtableResult.diagnostics.retryCount} retries
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>Model</dt>
+                    <dd>{roundtableResult.diagnostics.models.join(", ") || "Unavailable"}</dd>
+                  </div>
+                  <div>
+                    <dt>Tokens</dt>
+                    <dd>
+                      {roundtableResult.diagnostics.inputTokens ?? "Unavailable"} input ·{" "}
+                      {roundtableResult.diagnostics.outputTokens ?? "Unavailable"} output
+                    </dd>
+                  </div>
+                </dl>
+                <p>Diagnostics exclude the idea, prompts, and transcript content.</p>
+              </details>
+            ) : null}
+          </section>
+        </ResultErrorBoundary>
       ) : null}
     </main>
   );

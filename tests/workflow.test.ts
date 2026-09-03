@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { getPersonaAgents, panelLabel } from "@/lib/agents";
-import { IDEA_MAX_CHARACTERS } from "@/lib/limits";
+import { IDEA_MAX_CHARACTERS, TOPIC_MAX_CHARACTERS } from "@/lib/limits";
 import {
   createDiscussionTopics,
   normalizePanelMode,
@@ -10,7 +10,20 @@ import {
 
 afterEach(() => {
   vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
 });
+
+function modelReply(text: string): Response {
+  return new Response(
+    JSON.stringify({
+      model: "test-model",
+      stop_reason: "end_turn",
+      content: [{ type: "text", text }],
+      usage: { input_tokens: 100, output_tokens: 50 }
+    }),
+    { status: 200, headers: { "content-type": "application/json" } }
+  );
+}
 
 describe("panel configuration", () => {
   it("defaults unknown input to the startup panel", () => {
@@ -69,6 +82,48 @@ describe("human-approved agenda validation", () => {
 
   it("falls back to an editable startup agenda when no API key is configured", async () => {
     vi.stubEnv("ANTHROPIC_API_KEY", "");
+
+    await expect(
+      createDiscussionTopics(
+        "A marketplace where local chefs sell weekly subscriptions to nearby families.",
+        "startup"
+      )
+    ).resolves.toEqual([
+      "Audience demand",
+      "Differentiation",
+      "MVP scope",
+      "Risks",
+      "Next validation step"
+    ]);
+  });
+
+  it("applies the approved-agenda normalization to generated topics", async () => {
+    vi.stubEnv("ANTHROPIC_API_KEY", "test-key");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        modelReply(JSON.stringify([" Demand ", "Demand", "MVP scope", "Risks"]))
+      )
+    );
+
+    await expect(
+      createDiscussionTopics(
+        "A marketplace where local chefs sell weekly subscriptions to nearby families.",
+        "startup"
+      )
+    ).resolves.toEqual(["Demand", "MVP scope", "Risks"]);
+  });
+
+  it("falls back when generated topics violate the approved-agenda contract", async () => {
+    vi.stubEnv("ANTHROPIC_API_KEY", "test-key");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        modelReply(
+          JSON.stringify(["A".repeat(TOPIC_MAX_CHARACTERS + 1), "MVP scope", "Risks"])
+        )
+      )
+    );
 
     await expect(
       createDiscussionTopics(
