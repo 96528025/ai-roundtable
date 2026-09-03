@@ -3,7 +3,8 @@ import { validateIdea } from "@/lib/debate";
 import {
   ContractSchemaError,
   parseIdeaBriefValue,
-  parseIdeaFrameValue
+  parseIdeaFrameValue,
+  parseQuickIdeaBriefValue
 } from "@/lib/v2/contract-schema";
 import type { IdeaBrief, IdeaFrame, IdeaRequest } from "@/lib/v2/types";
 
@@ -98,6 +99,12 @@ export function parseIdeaFrame(raw: string): IdeaFrame {
 export function parseIdeaBrief(raw: string): IdeaBrief {
   const value = extractJsonObject(raw, "The brief writer");
   return asModelResponse(() => parseIdeaBriefValue(value));
+}
+
+/** The Quick Brief writer must produce a quick-mode, not-researched brief. */
+export function parseQuickIdeaBrief(raw: string): IdeaBrief {
+  const value = extractJsonObject(raw, "The brief writer");
+  return asModelResponse(() => parseQuickIdeaBriefValue(value));
 }
 
 export function assertLiveExecutionEnabled(): void {

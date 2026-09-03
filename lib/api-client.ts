@@ -2,11 +2,11 @@ import { isAppErrorCode, type AppErrorCode } from "@/lib/errors";
 import {
   ContractSchemaError,
   parseAgendaResponseValue,
-  parseQuickBriefResultValue,
+  parseQuickBriefApiResponseValue,
   parseRoundtableResultValue,
   type AgendaResponse
 } from "@/lib/v2/contract-schema";
-import type { QuickBriefDisplayResult } from "@/lib/v2/types";
+import type { QuickBriefResult } from "@/lib/v2/types";
 import type { PanelMode, RoundtableResult } from "@/types";
 
 export type { AgendaResponse };
@@ -202,9 +202,9 @@ export function buildQuickBriefRequest(
 export async function requestQuickBrief(
   body: QuickBriefRequestBody,
   signal?: AbortSignal
-): Promise<RequestOutcome<QuickBriefDisplayResult>> {
+): Promise<RequestOutcome<QuickBriefResult>> {
   const outcome = await postJson("/api/brief", body, QUICK_BRIEF_FALLBACK_MESSAGE, signal);
-  return parseSuccess(outcome, parseQuickBriefResultValue, QUICK_BRIEF_FALLBACK_MESSAGE);
+  return parseSuccess(outcome, parseQuickBriefApiResponseValue, QUICK_BRIEF_FALLBACK_MESSAGE);
 }
 
 export async function requestAgenda(

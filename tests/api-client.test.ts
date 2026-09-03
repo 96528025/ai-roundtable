@@ -315,18 +315,41 @@ describe("postJson", () => {
 });
 
 describe("requestQuickBrief", () => {
-  it("accepts a full result and the display-only sample", async () => {
+  it("accepts a full API result", async () => {
     stubFetch(jsonResponse(200, fullQuickBriefResult));
     await expect(requestQuickBrief({ idea: "an idea", constraints: [] })).resolves.toEqual({
       status: "success",
       data: fullQuickBriefResult
     });
+  });
 
-    stubFetch(jsonResponse(200, demoQuickResult));
-    await expect(requestQuickBrief({ idea: "an idea", constraints: [] })).resolves.toEqual({
-      status: "success",
-      data: demoQuickResult
-    });
+  it("requires the budget and diagnostics the endpoint always reports", async () => {
+    // The shipped sample is a display result without a run budget or diagnostics.
+    for (const body of [
+      demoQuickResult,
+      { ...fullQuickBriefResult, budget: undefined },
+      { ...fullQuickBriefResult, diagnostics: null }
+    ]) {
+      stubFetch(jsonResponse(200, body));
+      await expect(requestQuickBrief({ idea: "an idea", constraints: [] })).resolves.toEqual(
+        malformedOutcome(QUICK_BRIEF_FALLBACK_MESSAGE)
+      );
+    }
+  });
+
+  it("enforces Quick Brief semantics: quick mode and no external research", async () => {
+    const fullMode = structuredClone(fullQuickBriefResult);
+    (fullMode.brief as { mode: string }).mode = "full";
+
+    const researched = structuredClone(fullQuickBriefResult);
+    (researched.brief.evidence as { status: string }).status = "limited";
+
+    for (const body of [fullMode, researched]) {
+      stubFetch(jsonResponse(200, body));
+      await expect(requestQuickBrief({ idea: "an idea", constraints: [] })).resolves.toEqual(
+        malformedOutcome(QUICK_BRIEF_FALLBACK_MESSAGE)
+      );
+    }
   });
 
   it("rejects a 200 whose body fails deep contract validation", async () => {
@@ -409,13 +432,20 @@ describe("requestAgenda", () => {
 
     await expect(requestAgenda({ idea: "x", panelMode: "startup" })).resolves.toEqual({
       status: "success",
-      data: { idea: "x", topics: ["a", "b", "c"] }
+      data: { idea: "x", panelMode: "startup", topics: ["a", "b", "c"] }
     });
   });
 
-  it("rejects agendas with the wrong topic count or non-text topics", async () => {
-    for (const topics of [["a", "b"], ["a", "b", 3], "a,b,c", undefined]) {
-      stubFetch(jsonResponse(200, { idea: "x", topics }));
+  it("rejects agendas with the wrong topic count, non-text topics, or an unknown panel", async () => {
+    for (const body of [
+      { idea: "x", panelMode: "startup", topics: ["a", "b"] },
+      { idea: "x", panelMode: "startup", topics: ["a", "b", 3] },
+      { idea: "x", panelMode: "startup", topics: "a,b,c" },
+      { idea: "x", panelMode: "startup" },
+      { idea: "x", topics: ["a", "b", "c"] },
+      { idea: "x", panelMode: "board", topics: ["a", "b", "c"] }
+    ]) {
+      stubFetch(jsonResponse(200, body));
       await expect(requestAgenda({ idea: "x", panelMode: "startup" })).resolves.toEqual(
         malformedOutcome(AGENDA_FALLBACK_MESSAGE)
       );
@@ -423,7 +453,9 @@ describe("requestAgenda", () => {
   });
 
   it("forwards the abort signal", async () => {
-    const fetchMock = stubFetch(jsonResponse(200, { idea: "x", topics: ["a", "b", "c"] }));
+    const fetchMock = stubFetch(
+      jsonResponse(200, { idea: "x", panelMode: "startup", topics: ["a", "b", "c"] })
+    );
     const controller = new AbortController();
 
     await requestAgenda({ idea: "x", panelMode: "startup" }, controller.signal);
@@ -443,7 +475,7 @@ describe("requestRoundtable", () => {
     });
   });
 
-  it("rejects results with an incomplete summary or transcript", async () => {
+  it("rejects results with an incomplete summary, a malformed or empty transcript, or no agenda", async () => {
     const missingSummaryField = structuredClone(demoResult) as unknown as {
       summary: { recommendedNextStep?: string };
     };
@@ -454,7 +486,12 @@ describe("requestRoundtable", () => {
     };
     badTranscript.transcript = [{ round: "one", agentName: "x", content: "y" }];
 
-    for (const result of [missingSummaryField, badTranscript, { ...demoResult, agenda: [] }]) {
+    for (const result of [
+      missingSummaryField,
+      badTranscript,
+      { ...demoResult, agenda: [] },
+      { ...demoResult, transcript: [] }
+    ]) {
       stubFetch(jsonResponse(200, result));
       await expect(requestRoundtable(body)).resolves.toEqual(
         malformedOutcome(ROUNDTABLE_FALLBACK_MESSAGE)

@@ -12,7 +12,7 @@ import type {
   IdeaRequest,
   QuickBriefResult
 } from "@/lib/v2/types";
-import { normalizeIdeaRequest, parseIdeaBrief } from "@/lib/v2/validation";
+import { normalizeIdeaRequest, parseQuickIdeaBrief } from "@/lib/v2/validation";
 import type { ClaudeMessage } from "@/types";
 
 const BRIEF_MAX_TOKENS = 3_000;
@@ -164,7 +164,7 @@ async function generateBrief(
   });
 
   try {
-    return parseIdeaBrief(raw);
+    return parseQuickIdeaBrief(raw);
   } catch (error) {
     if (
       !(error instanceof AppError) ||
@@ -179,7 +179,7 @@ async function generateBrief(
       temperature: 0.25,
       maxTokens: BRIEF_MAX_TOKENS
     });
-    return parseIdeaBrief(raw);
+    return parseQuickIdeaBrief(raw);
   }
 }
 

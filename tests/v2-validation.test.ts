@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { routeIdea } from "@/lib/v2/planner";
 import { demoQuickResult } from "@/lib/v2/demo";
-import { normalizeIdeaRequest, parseIdeaBrief, parseIdeaFrame } from "@/lib/v2/validation";
+import { parseQuickBriefDisplayValue } from "@/lib/v2/contract-schema";
+import {
+  normalizeIdeaRequest,
+  parseIdeaBrief,
+  parseIdeaFrame,
+  parseQuickIdeaBrief
+} from "@/lib/v2/validation";
 import { ideaBriefFixture, ideaFrameFixture } from "./v2-fixtures";
 
 describe("V2 idea contracts", () => {
@@ -36,6 +42,28 @@ describe("V2 idea contracts", () => {
     expect(parseIdeaBrief(JSON.stringify(ideaBriefFixture))).toEqual(ideaBriefFixture);
     expect(parseIdeaBrief(JSON.stringify(demoQuickResult.brief))).toEqual(
       demoQuickResult.brief
+    );
+  });
+
+  it("requires the Quick Brief writer to stay in quick mode without external research", () => {
+    expect(parseQuickIdeaBrief(JSON.stringify(ideaBriefFixture))).toEqual(ideaBriefFixture);
+
+    const fullMode = structuredClone(ideaBriefFixture);
+    fullMode.mode = "full";
+    expect(() => parseQuickIdeaBrief(JSON.stringify(fullMode))).toThrowError(
+      expect.objectContaining({ code: "INVALID_MODEL_RESPONSE", status: 502 })
+    );
+    expect(() => parseQuickIdeaBrief(JSON.stringify(fullMode))).toThrow(/mode quick/i);
+
+    const researched = structuredClone(ideaBriefFixture);
+    researched.evidence.status = "limited";
+    expect(() => parseQuickIdeaBrief(JSON.stringify(researched))).toThrow(/not_researched/i);
+  });
+
+  it("keeps the shipped sample valid against the display contract", () => {
+    expect(parseQuickBriefDisplayValue(demoQuickResult)).toEqual(demoQuickResult);
+    expect(parseQuickBriefDisplayValue({ ...demoQuickResult, budget: undefined })).toEqual(
+      demoQuickResult
     );
   });
 

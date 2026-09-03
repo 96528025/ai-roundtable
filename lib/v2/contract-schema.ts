@@ -8,6 +8,7 @@ import type {
   IdeaBrief,
   IdeaFrame,
   QuickBriefDisplayResult,
+  QuickBriefResult,
   RiskSignal,
   RouteDecision,
   RouteReason,
@@ -495,6 +496,27 @@ function validateEvidenceIntegrity(brief: IdeaBrief): void {
   }
 }
 
+/**
+ * Milestone 1 Quick Brief semantics. The generic IdeaBrief contract also
+ * describes researched briefs; a Quick Brief is written without external
+ * research and the interface says so, so its mode and evidence status are
+ * fixed. `not_researched` in turn activates the integrity rules above: no
+ * sources, no evidence claims, no high confidence, an explicit evidence gap.
+ */
+export function assertQuickBriefSemantics(brief: IdeaBrief): IdeaBrief {
+  if (brief.mode !== "quick") {
+    fail("A Quick Brief must use mode quick.");
+  }
+  if (brief.evidence.status !== "not_researched") {
+    fail("A Quick Brief must report evidence.status not_researched.");
+  }
+  return brief;
+}
+
+export function parseQuickIdeaBriefValue(input: unknown): IdeaBrief {
+  return assertQuickBriefSemantics(parseIdeaBriefValue(input));
+}
+
 const routeReasons: readonly RouteReason[] = [
   "default_quick_path",
   "high_build_complexity",
@@ -554,19 +576,35 @@ export function parseRunDiagnosticsValue(input: unknown): RunDiagnostics {
   };
 }
 
-/** A /api/brief success body. `budget` and `diagnostics` are validated when present. */
-export function parseQuickBriefResultValue(input: unknown): QuickBriefDisplayResult {
-  const value = record(input, "QuickBriefResult");
+function parseQuickBriefCore(value: Record<string, unknown>) {
   const planning = record(value.planning, "planning");
-
-  const result: QuickBriefDisplayResult = {
+  return {
     frame: parseIdeaFrameValue(value.frame),
     planning: {
       status: oneOf(planning.status, ["model", "fallback"], "planning.status")
     },
     route: parseRouteDecisionValue(value.route),
-    brief: parseIdeaBriefValue(value.brief)
+    brief: parseQuickIdeaBriefValue(value.brief)
   };
+}
+
+/** A /api/brief success body. The endpoint always reports budget and diagnostics. */
+export function parseQuickBriefApiResponseValue(input: unknown): QuickBriefResult {
+  const value = record(input, "QuickBriefResult");
+  return {
+    ...parseQuickBriefCore(value),
+    budget: parseBudgetUsageValue(value.budget),
+    diagnostics: parseRunDiagnosticsValue(value.diagnostics)
+  };
+}
+
+/**
+ * A displayable Quick Brief such as the shipped sample, which has no run
+ * budget or diagnostics. Both are validated when present.
+ */
+export function parseQuickBriefDisplayValue(input: unknown): QuickBriefDisplayResult {
+  const value = record(input, "QuickBriefDisplayResult");
+  const result: QuickBriefDisplayResult = parseQuickBriefCore(value);
   if (value.budget !== undefined && value.budget !== null) {
     result.budget = parseBudgetUsageValue(value.budget);
   }
@@ -576,21 +614,23 @@ export function parseQuickBriefResultValue(input: unknown): QuickBriefDisplayRes
   return result;
 }
 
+const panelModes: readonly PanelMode[] = ["startup", "general"];
+
 export type AgendaResponse = {
   idea: string;
+  panelMode: PanelMode;
   topics: string[];
 };
 
-/** A /api/agenda success body. Extra fields such as diagnostics are ignored. */
+/** A /api/agenda success body. Diagnostics are not part of the display contract and are ignored. */
 export function parseAgendaResponseValue(input: unknown): AgendaResponse {
   const value = record(input, "AgendaResponse");
   return {
     idea: text(value.idea, "idea", IDEA_MAX_CHARACTERS),
+    panelMode: oneOf(value.panelMode, panelModes, "panelMode"),
     topics: textArray(value.topics, "topics", 3, 5, TOPIC_MAX_CHARACTERS)
   };
 }
-
-const panelModes: readonly PanelMode[] = ["startup", "general"];
 
 function parseSummaryValue(input: unknown): RoundtableSummary {
   const value = record(input, "summary");
@@ -620,7 +660,7 @@ export function parseRoundtableResultValue(input: unknown): RoundtableResult {
     agenda: textArray(value.agenda, "agenda", 3, 5, TOPIC_MAX_CHARACTERS),
     panelMode: oneOf(value.panelMode, panelModes, "panelMode"),
     summary: parseSummaryValue(value.summary),
-    transcript: array(value.transcript, "transcript", 0, 100, parseDebateEntry)
+    transcript: array(value.transcript, "transcript", 1, 100, parseDebateEntry)
   };
   if (value.diagnostics !== undefined && value.diagnostics !== null) {
     result.diagnostics = parseRunDiagnosticsValue(value.diagnostics);
