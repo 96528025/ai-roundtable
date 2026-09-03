@@ -113,6 +113,11 @@ export default function Home() {
   const [isPreparing, setIsPreparing] = useState(false);
   const [isRunningRoundtable, setIsRunningRoundtable] = useState(false);
   const [pendingFocus, setPendingFocus] = useState<FocusTarget | null>(null);
+  // Bumped whenever a result is (re)set so a tripped render boundary resets even
+  // when the same object (the sample) is shown again.
+  const [resultEpoch, setResultEpoch] = useState(0);
+  // Set from an effect, so it is present only once React has hydrated the page.
+  const [hydrated, setHydrated] = useState(false);
 
   const quickRequestRef = useRef<AbortController | null>(null);
   const agendaRequestRef = useRef<AbortController | null>(null);
@@ -132,6 +137,10 @@ export default function Home() {
     target?.focus();
     setPendingFocus(null);
   }, [pendingFocus]);
+
+  useEffect(() => {
+    setHydrated(true);
+  }, []);
 
   useEffect(() => {
     const refs = [quickRequestRef, agendaRequestRef, roundtableRequestRef];
@@ -172,6 +181,15 @@ export default function Home() {
     cancelRoundtable();
   }
 
+  /** A roundtable error describes the previous agenda; editing the agenda retires it. */
+  function clearRoundtableFailure() {
+    setFailure((current) => (current?.source === "roundtable" ? null : current));
+  }
+
+  function showResult() {
+    setResultEpoch((epoch) => epoch + 1);
+  }
+
   function resetAllResults() {
     cancelAllRequests();
     setAgenda(null);
@@ -208,6 +226,7 @@ export default function Home() {
     setQuickResult(demoQuickResult);
     setQuickResultSource("sample");
     setFailure(null);
+    showResult();
     setPendingFocus("result");
   }
 
@@ -236,6 +255,7 @@ export default function Home() {
     if (outcome.status === "success") {
       setQuickResult(outcome.data);
       setQuickResultSource("live");
+      showResult();
       setPendingFocus("result");
     } else if (outcome.status === "error") {
       setFailure({ error: outcome.error, source: "quick" });
@@ -275,6 +295,7 @@ export default function Home() {
 
   function updateTopic(index: number, value: string) {
     cancelRoundtable();
+    clearRoundtableFailure();
     setRoundtableResult(null);
     setAgenda((current) =>
       current?.map((topic, topicIndex) => (topicIndex === index ? value : topic)) ?? null
@@ -283,6 +304,7 @@ export default function Home() {
 
   function removeTopic(index: number) {
     cancelRoundtable();
+    clearRoundtableFailure();
     setRoundtableResult(null);
     setAgenda((current) => {
       if (!current || current.length <= 3) return current;
@@ -292,6 +314,7 @@ export default function Home() {
 
   function addTopic() {
     cancelRoundtable();
+    clearRoundtableFailure();
     setRoundtableResult(null);
     setAgenda((current) => {
       if (!current || current.length >= 5) return current;
@@ -319,6 +342,7 @@ export default function Home() {
 
     if (outcome.status === "success") {
       setRoundtableResult(outcome.data);
+      showResult();
     } else if (outcome.status === "error") {
       setFailure({ error: outcome.error, source: "roundtable" });
       setPendingFocus("error");
@@ -350,7 +374,7 @@ export default function Home() {
   const isBusy = isRunningQuick || isPreparing || isRunningRoundtable;
 
   return (
-    <main className="shell">
+    <main className="shell" data-hydrated={hydrated ? "true" : undefined}>
       <section className="hero">
         <p className="eyebrow">Evidence-aware pre-build decisions</p>
         <h1>AI Roundtable</h1>
@@ -362,7 +386,7 @@ export default function Home() {
 
       {publicDemoOnly ? (
         <section className="inputPanel publicDemoPanel" aria-labelledby="public-demo-title">
-          <div className="stepLabel">Public portfolio demo</div>
+          <div className="stepLabel">Public sample demo</div>
           <h2 id="public-demo-title">Review a sample pre-build decision</h2>
           <p>
             This deployment is sample-only. It uses a pre-generated Quick Brief so the full
@@ -526,7 +550,7 @@ export default function Home() {
       ) : null}
 
       {quickResult && quickResultSource ? (
-        <ResultErrorBoundary resetKey={quickResult} fallbackMessage={QUICK_BRIEF_FALLBACK_MESSAGE}>
+        <ResultErrorBoundary resetKey={resultEpoch} fallbackMessage={QUICK_BRIEF_FALLBACK_MESSAGE}>
           <QuickBriefReport
             ref={resultRef}
             result={quickResult}
@@ -615,10 +639,7 @@ export default function Home() {
       ) : null}
 
       {roundtableResult ? (
-        <ResultErrorBoundary
-          resetKey={roundtableResult}
-          fallbackMessage={ROUNDTABLE_FALLBACK_MESSAGE}
-        >
+        <ResultErrorBoundary resetKey={resultEpoch} fallbackMessage={ROUNDTABLE_FALLBACK_MESSAGE}>
           <section className="results" aria-label="Full Roundtable result">
             <div className="meetingContext">
               <span>Full Roundtable · fixed baseline</span>

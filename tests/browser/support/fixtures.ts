@@ -237,6 +237,9 @@ export const IDEA =
 export async function openInteractiveForm(page: Page) {
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Frame the idea once" })).toBeVisible();
+  // The attribute is set from a React effect, so it proves hydration finished
+  // before any test types into a controlled field or clicks a handler.
+  await expect(page.getByRole("main")).toHaveAttribute("data-hydrated", "true");
 }
 
 /** Expand the collapsed Full Roundtable settings so the panel picker is reachable. */

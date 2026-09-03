@@ -368,6 +368,45 @@ test.describe("agenda and roundtable flows", () => {
   });
 });
 
+test.describe("stale errors", () => {
+  test("editing an agenda topic retires a roundtable error that described the old agenda", async ({
+    page,
+    agenda,
+    roundtable
+  }) => {
+    agenda.respondWith((call) => ({
+      status: 200,
+      body: agendaResponseFor((call.body as { idea: string }).idea)
+    }));
+    roundtable.respondWith(() => retryableOverloadedError);
+
+    await openInteractiveForm(page);
+    await page.getByLabel("Product idea").fill(IDEA);
+    await page.getByRole("button", { name: "Prepare Full Roundtable" }).click();
+    await expect(agendaPanel(page)).toBeVisible();
+    await page.getByRole("button", { name: "Approve and convene" }).click();
+
+    const alert = errorAlert(page);
+    await expect(alert).toBeFocused();
+    await expect(alert.getByRole("button", { name: "Try again" })).toBeVisible();
+
+    // The error belongs to the agenda that was sent. Changing the agenda retires it,
+    // so "Try again" can never resend a payload the user has since edited away.
+    const firstTopic = page.getByRole("textbox", { name: "Agenda topic 1", exact: true });
+    await firstTopic.fill("Demand among students comparing laptops");
+    await expect(errorAlert(page)).toHaveCount(0);
+    await expect(agendaPanel(page)).toBeVisible();
+    await expect(firstTopic).toBeFocused();
+    expect(roundtable.calls).toHaveLength(1);
+
+    // A Quick Brief error is not touched by agenda edits: it belongs to a different flow.
+    roundtable.respondWith(() => ({ status: 200, body: roundtableResult }));
+    await page.getByRole("button", { name: "Approve and convene" }).click();
+    await expect(roundtableResults(page)).toBeVisible();
+    expect(roundtable.calls).toHaveLength(2);
+  });
+});
+
 test.describe("synchronous in-flight guard", () => {
   test("two Quick Brief submissions in the same tick start one request", async ({
     page,
