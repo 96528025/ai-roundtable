@@ -2,10 +2,11 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 /**
- * Reproducible contrast check for the colour pairs axe-core reports as
- * "needs review": their backgrounds are semi-transparent panels over a page
- * gradient, which axe cannot resolve. Every colour below is read from, or
- * asserted to exist in, app/globals.css so a palette change fails here.
+ * Reproducible contrast check for representative palette combinations whose
+ * backgrounds are semi-transparent panels over a page gradient. These checks
+ * complement axe-core's unresolved colour-contrast review; they do not map to
+ * every individual axe node. Every colour below is read from, or asserted to
+ * exist in, app/globals.css so a palette change fails here.
  *
  * Thresholds follow WCAG 2.x: 4.5:1 for text (1.4.3) and 3:1 for the focus
  * indicator against its adjacent background (1.4.11).
@@ -105,7 +106,7 @@ const focusPairs: Array<[string, Rgb, Rgb]> = [
   ["focus ring against the error background (retry button)", focusRing, errorBackground]
 ];
 
-describe("colour contrast of pairs axe cannot resolve", () => {
+describe("colour contrast of representative palette combinations", () => {
   it.each(textPairs)("%s reaches 4.5:1", (_label, foreground, background) => {
     expect(contrast(foreground, background)).toBeGreaterThanOrEqual(4.5);
   });

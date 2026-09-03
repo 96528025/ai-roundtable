@@ -56,8 +56,10 @@ jobs:
         run: npm test
       - name: Browser-integration tests (Playwright, Chromium)
         # playwright.config.ts builds and starts the app with provider access
-        # disabled; every /api/* call is fulfilled by route mocks. No secrets
-        # are available to this job and live evaluations are never run.
+        # disabled; every page-originated /api/* call is fulfilled by route
+        # mocks. No provider credentials or repository secrets are passed to
+        # this job; GITHUB_TOKEN has read-only contents access. Live
+        # evaluations are never run.
         run: npm run test:browser
       - uses: actions/upload-artifact@v4
         if: failure()

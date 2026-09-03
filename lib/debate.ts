@@ -7,6 +7,14 @@ import {
   TOPIC_MAX_CHARACTERS
 } from "@/lib/limits";
 import { createRunObserver, type RunObserver } from "@/lib/observability";
+import {
+  normalizeRoundtableAgenda,
+  ROUNDTABLE_ROUNDS
+} from "@/lib/roundtable-contract";
+import {
+  ContractSchemaError,
+  parseRoundtableSummaryValue
+} from "@/lib/v2/contract-schema";
 import type {
   DebateEntry,
   PanelMode,
@@ -91,11 +99,9 @@ export function normalizeTopics(value: unknown): string[] {
     );
   }
 
-  const topics = value
-    .filter((topic): topic is string => typeof topic === "string")
-    .map((topic) => topic.trim())
-    .filter(Boolean)
-    .filter((topic, index, all) => all.indexOf(topic) === index);
+  const topics = normalizeRoundtableAgenda(
+    value.filter((topic): topic is string => typeof topic === "string")
+  );
 
   if (topics.length < 3 || topics.length > 5) {
     throw invalidRequest(
@@ -141,10 +147,7 @@ export async function createDiscussionTopics(
   try {
     const parsed = JSON.parse(raw) as unknown;
     if (Array.isArray(parsed) && parsed.every((topic) => typeof topic === "string")) {
-      const topics = parsed.slice(0, 5).map((topic) => topic.trim()).filter(Boolean);
-      if (topics.length >= 3) {
-        return topics;
-      }
+      return normalizeTopics(parsed.slice(0, 5));
     }
   } catch {
     // Fall through to the default agenda.
@@ -223,45 +226,22 @@ function extractJsonObject(raw: string): string {
 
 export function parseRoundtableSummary(raw: string): RoundtableSummary {
   try {
-    return validateSummary(JSON.parse(extractJsonObject(raw)));
+    return parseRoundtableSummaryValue(JSON.parse(extractJsonObject(raw)));
   } catch (error) {
     if (error instanceof AppError) throw error;
+    if (error instanceof ContractSchemaError) {
+      throw new AppError("The moderator returned an incomplete report.", {
+        code: "INVALID_MODEL_RESPONSE",
+        status: 502,
+        cause: error
+      });
+    }
     throw new AppError("The moderator returned invalid JSON.", {
       code: "INVALID_MODEL_RESPONSE",
       status: 502,
       cause: error
     });
   }
-}
-
-function validateSummary(value: unknown): RoundtableSummary {
-  const summary =
-    typeof value === "object" && value !== null
-      ? (value as Partial<RoundtableSummary>)
-      : {};
-
-  if (
-    typeof summary.executiveSummary !== "string" ||
-    !Array.isArray(summary.consensus) ||
-    !Array.isArray(summary.disagreements) ||
-    !Array.isArray(summary.risks) ||
-    typeof summary.recommendedNextStep !== "string" ||
-    typeof summary.followUpQuestion !== "string"
-  ) {
-    throw new AppError("The moderator returned an incomplete report.", {
-      code: "INVALID_MODEL_RESPONSE",
-      status: 502
-    });
-  }
-
-  return {
-    executiveSummary: summary.executiveSummary,
-    consensus: summary.consensus.map(String),
-    disagreements: summary.disagreements.map(String),
-    risks: summary.risks.map(String),
-    recommendedNextStep: summary.recommendedNextStep,
-    followUpQuestion: summary.followUpQuestion
-  };
 }
 
 async function synthesizeSummary(
@@ -345,7 +325,7 @@ export async function runRoundtable(
     const personaAgents = getPersonaAgents(panelMode);
     const transcript: DebateEntry[] = [];
 
-    for (const round of [1, 2, 3]) {
+    for (const round of ROUNDTABLE_ROUNDS) {
       for (const agent of personaAgents) {
         const entry = await runAgentTurn(
           agent,

@@ -1,4 +1,9 @@
 import { IDEA_MAX_CHARACTERS, TOPIC_MAX_CHARACTERS } from "@/lib/limits";
+import {
+  normalizeRoundtableAgenda,
+  PANEL_AGENT_NAMES,
+  ROUNDTABLE_ROUNDS
+} from "@/lib/roundtable-contract";
 import type {
   Alternative,
   BriefRisk,
@@ -622,6 +627,8 @@ export type AgendaResponse = {
   topics: string[];
 };
 
+export type AgendaResponseExpectation = Pick<AgendaResponse, "idea" | "panelMode">;
+
 /** A /api/agenda success body. Diagnostics are not part of the display contract and are ignored. */
 export function parseAgendaResponseValue(input: unknown): AgendaResponse {
   const value = record(input, "AgendaResponse");
@@ -632,7 +639,23 @@ export function parseAgendaResponseValue(input: unknown): AgendaResponse {
   };
 }
 
-function parseSummaryValue(input: unknown): RoundtableSummary {
+/** Parse an agenda endpoint response and bind its request echoes to this request. */
+export function parseAgendaApiResponseValue(
+  input: unknown,
+  expected: AgendaResponseExpectation
+): AgendaResponse {
+  const result = parseAgendaResponseValue(input);
+  if (result.idea !== expected.idea.trim()) {
+    fail("AgendaResponse.idea does not match the request.");
+  }
+  if (result.panelMode !== expected.panelMode) {
+    fail("AgendaResponse.panelMode does not match the request.");
+  }
+  return result;
+}
+
+/** Shared structural contract for model output and rendered roundtable summaries. */
+export function parseRoundtableSummaryValue(input: unknown): RoundtableSummary {
   const value = record(input, "summary");
   return {
     executiveSummary: text(value.executiveSummary, "summary.executiveSummary", 5_000),
@@ -653,13 +676,75 @@ function parseDebateEntry(value: unknown, index: number): DebateEntry {
   };
 }
 
-/** A /api/roundtable success body. */
-export function parseRoundtableResultValue(input: unknown): RoundtableResult {
-  const value = record(input, "RoundtableResult");
+function sameTextItems(actual: readonly string[], expected: readonly string[]): boolean {
+  return (
+    actual.length === expected.length &&
+    actual.every((item, index) => item === expected[index])
+  );
+}
+
+function parseFixedRoundtableTranscript(input: unknown, panelMode: PanelMode): DebateEntry[] {
+  const expectedAgentNames: readonly string[] = PANEL_AGENT_NAMES[panelMode];
+  const expectedTurnCount = ROUNDTABLE_ROUNDS.length * expectedAgentNames.length;
+  const transcript = array(
+    input,
+    "transcript",
+    expectedTurnCount,
+    expectedTurnCount,
+    parseDebateEntry
+  );
+  for (const [index, entry] of transcript.entries()) {
+    const expectedRound = ROUNDTABLE_ROUNDS[Math.floor(index / expectedAgentNames.length)];
+    const expectedAgentName = expectedAgentNames[index % expectedAgentNames.length];
+    if (entry.round !== expectedRound || entry.agentName !== expectedAgentName) {
+      fail("transcript does not match the fixed round-agent order.");
+    }
+  }
+
+  return transcript;
+}
+
+export type RoundtableApiResponse = Omit<RoundtableResult, "diagnostics"> & {
+  diagnostics: RunDiagnostics;
+};
+
+export type RoundtableResponseExpectation = {
+  agenda: readonly string[];
+  panelMode: PanelMode;
+};
+
+/** A /api/roundtable success body bound to the request and fixed workflow. */
+export function parseRoundtableApiResponseValue(
+  input: unknown,
+  expected: RoundtableResponseExpectation
+): RoundtableApiResponse {
+  const value = record(input, "RoundtableApiResponse");
+  const agenda = textArray(value.agenda, "agenda", 3, 5, TOPIC_MAX_CHARACTERS);
+  const panelMode = oneOf(value.panelMode, panelModes, "panelMode");
+
+  if (!sameTextItems(agenda, normalizeRoundtableAgenda(expected.agenda))) {
+    fail("RoundtableApiResponse.agenda does not match the request.");
+  }
+  if (panelMode !== expected.panelMode) {
+    fail("RoundtableApiResponse.panelMode does not match the request.");
+  }
+
+  return {
+    agenda,
+    panelMode,
+    summary: parseRoundtableSummaryValue(value.summary),
+    transcript: parseFixedRoundtableTranscript(value.transcript, panelMode),
+    diagnostics: parseRunDiagnosticsValue(value.diagnostics)
+  };
+}
+
+/** A displayable roundtable sample; diagnostics and fixed-workflow checks are optional. */
+export function parseRoundtableDisplayValue(input: unknown): RoundtableResult {
+  const value = record(input, "RoundtableDisplayResult");
   const result: RoundtableResult = {
     agenda: textArray(value.agenda, "agenda", 3, 5, TOPIC_MAX_CHARACTERS),
     panelMode: oneOf(value.panelMode, panelModes, "panelMode"),
-    summary: parseSummaryValue(value.summary),
+    summary: parseRoundtableSummaryValue(value.summary),
     transcript: array(value.transcript, "transcript", 1, 100, parseDebateEntry)
   };
   if (value.diagnostics !== undefined && value.diagnostics !== null) {

@@ -20,8 +20,19 @@ import {
   agendaResponseFor,
   quickBriefResult,
   retryableOverloadedError,
-  roundtableResult
+  roundtableResponseFor
 } from "./support/responses";
+
+function roundtableSuccess(call: { body: unknown }) {
+  const body = call.body as {
+    topics: string[];
+    panelMode: "startup" | "general";
+  };
+  return {
+    status: 200,
+    body: roundtableResponseFor(body.topics, body.panelMode)
+  };
+}
 
 test.describe("request identity guard, independent of AbortController", () => {
   test("a stale success that reaches the page after View sample is discarded", async ({
@@ -233,9 +244,9 @@ test.describe("agenda and roundtable flows", () => {
       body: agendaResponseFor((call.body as { idea: string }).idea)
     }));
     const release = deferred();
-    roundtable.respondWith(async () => {
+    roundtable.respondWith(async (call) => {
       await release.promise;
-      return { status: 200, body: roundtableResult };
+      return roundtableSuccess(call);
     });
     const requests = trackRequests(page, "/api/roundtable");
 
@@ -290,6 +301,36 @@ test.describe("agenda and roundtable flows", () => {
     await expect(generalPanel).toBeFocused();
   });
 
+  test("clicking the selected advisory panel leaves a pending agenda running", async ({
+    page,
+    agenda
+  }) => {
+    const release = deferred();
+    agenda.respondWith(async (call) => {
+      await release.promise;
+      return { status: 200, body: agendaResponseFor((call.body as { idea: string }).idea) };
+    });
+    const failedRequests = trackFailedRequests(page, "/api/agenda");
+
+    await openInteractiveForm(page);
+    await page.getByLabel("Product idea").fill(IDEA);
+    await openAdvancedOptions(page);
+    await page.getByRole("button", { name: "Prepare Full Roundtable" }).click();
+    const pendingButton = page.getByRole("button", { name: "Preparing Full agenda..." });
+    await expect(pendingButton).toBeDisabled();
+
+    const selectedPanel = page.getByRole("button", { name: /Startup Validation/ });
+    await expect(selectedPanel).toHaveAttribute("aria-pressed", "true");
+    await selectedPanel.click();
+    await expect(pendingButton).toBeDisabled();
+    expect(failedRequests).toEqual([]);
+
+    release.resolve();
+    await expect(agendaPanel(page)).toBeVisible();
+    expect(agenda.calls).toHaveLength(1);
+    expect(failedRequests).toEqual([]);
+  });
+
   test("changing the advisory panel leaves a pending Quick Brief running", async ({
     page,
     brief
@@ -326,9 +367,9 @@ test.describe("agenda and roundtable flows", () => {
       body: agendaResponseFor((call.body as { idea: string }).idea)
     }));
     const release = deferred();
-    roundtable.respondWith(async () => {
+    roundtable.respondWith(async (call) => {
       await release.promise;
-      return { status: 200, body: roundtableResult };
+      return roundtableSuccess(call);
     });
     const failedRequests = trackFailedRequests(page, "/api/roundtable");
 
@@ -399,8 +440,8 @@ test.describe("stale errors", () => {
     await expect(firstTopic).toBeFocused();
     expect(roundtable.calls).toHaveLength(1);
 
-    // A Quick Brief error is not touched by agenda edits: it belongs to a different flow.
-    roundtable.respondWith(() => ({ status: 200, body: roundtableResult }));
+    // A fresh run can now proceed with the edited agenda.
+    roundtable.respondWith(roundtableSuccess);
     await page.getByRole("button", { name: "Approve and convene" }).click();
     await expect(roundtableResults(page)).toBeVisible();
     expect(roundtable.calls).toHaveLength(2);
@@ -442,6 +483,9 @@ test.describe("synchronous in-flight guard", () => {
     await page.getByLabel("Product idea").fill(IDEA);
     await page.getByRole("button", { name: "Prepare Full Roundtable" }).evaluate((button) => {
       (button as HTMLButtonElement).click();
+      // React disables the control after the first discrete event. Re-enable
+      // the DOM node so the second event reaches the synchronous ref guard.
+      (button as HTMLButtonElement).disabled = false;
       (button as HTMLButtonElement).click();
     });
     await expect(page.getByRole("button", { name: "Preparing Full agenda..." })).toBeDisabled();
@@ -449,5 +493,70 @@ test.describe("synchronous in-flight guard", () => {
     release.resolve();
     await expect(agendaPanel(page)).toBeVisible();
     expect(agenda.calls).toHaveLength(1);
+  });
+
+  test("two Roundtable activations in the same tick start one request", async ({
+    page,
+    agenda,
+    roundtable
+  }) => {
+    agenda.respondWith((call) => ({
+      status: 200,
+      body: agendaResponseFor((call.body as { idea: string }).idea)
+    }));
+    const release = deferred();
+    roundtable.respondWith(async (call) => {
+      await release.promise;
+      return roundtableSuccess(call);
+    });
+
+    await openInteractiveForm(page);
+    await page.getByLabel("Product idea").fill(IDEA);
+    await page.getByRole("button", { name: "Prepare Full Roundtable" }).click();
+    await expect(agendaPanel(page)).toBeVisible();
+
+    await page.getByRole("button", { name: "Approve and convene" }).evaluate((button) => {
+      (button as HTMLButtonElement).click();
+      (button as HTMLButtonElement).disabled = false;
+      (button as HTMLButtonElement).click();
+    });
+    await expect(page.getByRole("button", { name: "Council in session..." })).toBeDisabled();
+
+    release.resolve();
+    await expect(roundtableResults(page)).toBeVisible();
+    expect(roundtable.calls).toHaveLength(1);
+  });
+
+  test("Quick Brief and agenda activations in the same tick start only the first request", async ({
+    page,
+    brief,
+    agenda
+  }) => {
+    const release = deferred();
+    brief.respondWith(async () => {
+      await release.promise;
+      return { status: 200, body: quickBriefResult };
+    });
+
+    await openInteractiveForm(page);
+    await page.getByLabel("Product idea").fill(IDEA);
+    await page.locator("main").evaluate((main) => {
+      const form = main.querySelector("form");
+      const agendaButton = Array.from(main.querySelectorAll("button")).find(
+        (button) => button.textContent?.trim() === "Prepare Full Roundtable"
+      );
+      if (!(form instanceof HTMLFormElement) || !(agendaButton instanceof HTMLButtonElement)) {
+        throw new Error("workflow controls are missing");
+      }
+      form.requestSubmit();
+      agendaButton.disabled = false;
+      agendaButton.click();
+    });
+    await expect(quickBriefStatus(page)).toBeVisible();
+
+    release.resolve();
+    await expect(quickBriefResults(page)).toBeFocused();
+    expect(brief.calls).toHaveLength(1);
+    expect(agenda.calls).toHaveLength(0);
   });
 });

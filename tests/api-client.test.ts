@@ -15,8 +15,10 @@ import {
 } from "@/lib/api-client";
 import { demoResult } from "@/lib/demo";
 import { appErrorCodes } from "@/lib/errors";
+import { PANEL_AGENT_NAMES, ROUNDTABLE_ROUNDS } from "@/lib/roundtable-contract";
 import { demoQuickResult } from "@/lib/v2/demo";
 import type { QuickBriefResult } from "@/lib/v2/types";
+import type { PanelMode, RoundtableResult } from "@/types";
 import { ideaBriefFixture, ideaFrameFixture } from "./v2-fixtures";
 
 afterEach(() => {
@@ -68,6 +70,28 @@ const fullQuickBriefResult: QuickBriefResult = {
   }
 };
 
+const roundtableTopics = ["Demand", "MVP scope", "Trust and risk"];
+
+function fullRoundtableResult(
+  panelMode: PanelMode = "startup",
+  agenda: string[] = roundtableTopics
+): RoundtableResult & { diagnostics: NonNullable<RoundtableResult["diagnostics"]> } {
+  return {
+    ...demoResult,
+    agenda: [...agenda],
+    panelMode,
+    transcript: ROUNDTABLE_ROUNDS.flatMap((round) =>
+      PANEL_AGENT_NAMES[panelMode].map((agentName, index) => ({
+        round,
+        agentName,
+        content: demoResult.transcript[(round - 1) * PANEL_AGENT_NAMES[panelMode].length + index]
+          .content
+      }))
+    ),
+    diagnostics: fullQuickBriefResult.diagnostics
+  };
+}
+
 const malformedOutcome = (message: string) => ({
   status: "error",
   error: { message, code: "MALFORMED_RESPONSE", retryable: false }
@@ -115,10 +139,27 @@ describe("buildQuickBriefRequest", () => {
 
 describe("parsePublicError", () => {
   it("shows server text for user-correctable validation codes", () => {
-    for (const code of ["INVALID_REQUEST", "INVALID_IDEA", "INVALID_AGENDA", "LIVE_MODE_DISABLED"]) {
+    for (const code of ["INVALID_REQUEST", "INVALID_IDEA", "INVALID_AGENDA"]) {
       expect(parsePublicError({ error: "Fix your input.", code, retryable: false }, "Fallback"))
         .toEqual({ message: "Fix your input.", code, retryable: false });
     }
+  });
+
+  it("uses fixed client copy when live execution is disabled", () => {
+    expect(
+      parsePublicError(
+        {
+          error: "unexpected deployment detail",
+          code: "LIVE_MODE_DISABLED",
+          retryable: false
+        },
+        "Fallback"
+      )
+    ).toEqual({
+      message: serviceErrorMessages.LIVE_MODE_DISABLED,
+      code: "LIVE_MODE_DISABLED",
+      retryable: false
+    });
   });
 
   it("replaces server text with fixed client copy for service-side codes", () => {
@@ -420,7 +461,7 @@ describe("requestQuickBrief", () => {
 });
 
 describe("requestAgenda", () => {
-  it("returns only the validated fields of a well-formed agenda", async () => {
+  it("returns only validated fields and accepts the server's normalized idea echo", async () => {
     stubFetch(
       jsonResponse(200, {
         idea: "x",
@@ -430,10 +471,27 @@ describe("requestAgenda", () => {
       })
     );
 
-    await expect(requestAgenda({ idea: "x", panelMode: "startup" })).resolves.toEqual({
+    await expect(requestAgenda({ idea: "  x  ", panelMode: "startup" })).resolves.toEqual({
       status: "success",
       data: { idea: "x", panelMode: "startup", topics: ["a", "b", "c"] }
     });
+  });
+
+  it.each([
+    {
+      name: "idea belongs to another request",
+      response: { idea: "another idea", panelMode: "startup", topics: ["a", "b", "c"] }
+    },
+    {
+      name: "panel belongs to another request",
+      response: { idea: "x", panelMode: "general", topics: ["a", "b", "c"] }
+    }
+  ])("rejects a valid response when its $name", async ({ response }) => {
+    stubFetch(jsonResponse(200, response));
+
+    await expect(requestAgenda({ idea: " x ", panelMode: "startup" })).resolves.toEqual(
+      malformedOutcome(AGENDA_FALLBACK_MESSAGE)
+    );
   });
 
   it("rejects agendas with the wrong topic count, non-text topics, or an unknown panel", async () => {
@@ -464,24 +522,29 @@ describe("requestAgenda", () => {
 });
 
 describe("requestRoundtable", () => {
-  const body = { idea: "x", panelMode: "startup" as const, topics: ["a", "b", "c"] };
+  const body = { idea: "x", panelMode: "startup" as const, topics: roundtableTopics };
 
-  it("accepts the shipped sample roundtable", async () => {
-    stubFetch(jsonResponse(200, demoResult));
+  it.each(["startup", "general"] as const)(
+    "accepts a complete fixed %s-panel API result",
+    async (panelMode) => {
+      const result = fullRoundtableResult(panelMode);
+      stubFetch(jsonResponse(200, result));
 
-    await expect(requestRoundtable(body)).resolves.toEqual({
-      status: "success",
-      data: demoResult
-    });
-  });
+      await expect(requestRoundtable({ ...body, panelMode })).resolves.toEqual({
+        status: "success",
+        data: result
+      });
+    }
+  );
 
-  it("rejects results with an incomplete summary, a malformed or empty transcript, or no agenda", async () => {
-    const missingSummaryField = structuredClone(demoResult) as unknown as {
+  it("rejects results with an incomplete summary or malformed top-level fields", async () => {
+    const validResult = fullRoundtableResult();
+    const missingSummaryField = structuredClone(validResult) as unknown as {
       summary: { recommendedNextStep?: string };
     };
     delete missingSummaryField.summary.recommendedNextStep;
 
-    const badTranscript = structuredClone(demoResult) as unknown as {
+    const badTranscript = structuredClone(validResult) as unknown as {
       transcript: unknown[];
     };
     badTranscript.transcript = [{ round: "one", agentName: "x", content: "y" }];
@@ -489,8 +552,10 @@ describe("requestRoundtable", () => {
     for (const result of [
       missingSummaryField,
       badTranscript,
-      { ...demoResult, agenda: [] },
-      { ...demoResult, transcript: [] }
+      { ...validResult, agenda: [] },
+      { ...validResult, transcript: [] },
+      { ...validResult, diagnostics: undefined },
+      { ...validResult, diagnostics: null }
     ]) {
       stubFetch(jsonResponse(200, result));
       await expect(requestRoundtable(body)).resolves.toEqual(
@@ -499,8 +564,93 @@ describe("requestRoundtable", () => {
     }
   });
 
+  it.each([
+    {
+      name: "agenda content differs",
+      mutate(result: ReturnType<typeof fullRoundtableResult>) {
+        result.agenda[0] = "Different demand question";
+      }
+    },
+    {
+      name: "agenda order differs",
+      mutate(result: ReturnType<typeof fullRoundtableResult>) {
+        [result.agenda[0], result.agenda[1]] = [result.agenda[1], result.agenda[0]];
+      }
+    },
+    {
+      name: "panel differs",
+      mutate(result: ReturnType<typeof fullRoundtableResult>) {
+        result.panelMode = "general";
+      }
+    },
+    {
+      name: "diagnostics are absent",
+      mutate(result: ReturnType<typeof fullRoundtableResult>) {
+        (result as RoundtableResult).diagnostics = undefined;
+      }
+    },
+    {
+      name: "transcript has too few turns",
+      mutate(result: ReturnType<typeof fullRoundtableResult>) {
+        result.transcript.pop();
+      }
+    },
+    {
+      name: "transcript contains round zero",
+      mutate(result: ReturnType<typeof fullRoundtableResult>) {
+        result.transcript[0].round = 0;
+      }
+    },
+    {
+      name: "transcript contains round four",
+      mutate(result: ReturnType<typeof fullRoundtableResult>) {
+        result.transcript[0].round = 4;
+      }
+    },
+    {
+      name: "transcript contains an agent outside the panel",
+      mutate(result: ReturnType<typeof fullRoundtableResult>) {
+        result.transcript[0].agentName = "Unknown Agent";
+      }
+    },
+    {
+      name: "one round duplicates an agent and omits another",
+      mutate(result: ReturnType<typeof fullRoundtableResult>) {
+        result.transcript[1].agentName = result.transcript[0].agentName;
+      }
+    },
+    {
+      name: "transcript order differs from the fixed workflow",
+      mutate(result: ReturnType<typeof fullRoundtableResult>) {
+        [result.transcript[0], result.transcript[1]] = [
+          result.transcript[1],
+          result.transcript[0]
+        ];
+      }
+    }
+  ])("rejects a 200 when $name", async ({ mutate }) => {
+    const result = fullRoundtableResult();
+    mutate(result);
+    stubFetch(jsonResponse(200, result));
+
+    await expect(requestRoundtable(body)).resolves.toEqual(
+      malformedOutcome(ROUNDTABLE_FALLBACK_MESSAGE)
+    );
+  });
+
+  it("compares the response agenda with the server-normalized request agenda", async () => {
+    const unnormalizedTopics = [" Demand ", "MVP scope", "Trust and risk", "Demand", " "];
+    const result = fullRoundtableResult();
+    stubFetch(jsonResponse(200, result));
+
+    await expect(requestRoundtable({ ...body, topics: unnormalizedTopics })).resolves.toEqual({
+      status: "success",
+      data: result
+    });
+  });
+
   it("forwards the abort signal", async () => {
-    const fetchMock = stubFetch(jsonResponse(200, demoResult));
+    const fetchMock = stubFetch(jsonResponse(200, fullRoundtableResult()));
     const controller = new AbortController();
 
     await requestRoundtable(body, controller.signal);

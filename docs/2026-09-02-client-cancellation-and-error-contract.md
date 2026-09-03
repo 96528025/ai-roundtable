@@ -67,11 +67,11 @@ client now parses that body as untrusted input (`lib/api-client.ts`):
   `MALFORMED_RESPONSE`, non-retryable.
 - `code` must be one of the server's declared codes. The list lives once, as a
   runtime constant in `lib/errors.ts`, and the type is derived from it.
-- Validation codes (`INVALID_REQUEST`, `INVALID_IDEA`, `INVALID_AGENDA`,
-  `LIVE_MODE_DISABLED`) show the server's text because it is written for the user
-  and tells them what to change. Every other code maps to fixed client copy, so
-  service-side detail can never reach the page even if a future server message
-  carried it. `INTERNAL_ERROR` uses the calling flow's generic message.
+- Input-validation codes (`INVALID_REQUEST`, `INVALID_IDEA`, `INVALID_AGENDA`)
+  show the server's bounded text because it tells the user what to change. Every
+  other service-side code, including `LIVE_MODE_DISABLED`, maps to fixed client
+  copy, so service-side detail cannot reach the page even if a future server
+  message carries it. `INTERNAL_ERROR` uses the calling flow's generic message.
 - `requestId` is kept only if it looks like an opaque identifier and is shown in a
   quiet reference line together with the code.
 - "Try again" is rendered only when `retryable` is `true`; it re-runs the same
@@ -82,47 +82,66 @@ client now parses that body as untrusted input (`lib/api-client.ts`):
 
 ### 2.3 Every 2xx body is parsed before it renders
 
-`lib/v2/contract-schema.ts` holds pure parsers for the Quick Brief result, the
-agenda response, and the roundtable result. They reference no environment,
-credentials, or network code, so the module ships in the client bundle; the server
-wraps the same parsers to validate model output, which keeps one definition of the
-contract. Parsers are endpoint-specific: the `/api/brief` parser requires the run
-budget and diagnostics the endpoint always reports and enforces Quick Brief
-semantics (`mode: quick`, `evidence.status: not_researched`, which in turn forbids
-sources, evidence claims, and high confidence), the agenda parser validates the
-echoed panel mode, and the roundtable parser requires a non-empty transcript. A
-separate display parser accepts the shipped sample, which has no run data. A body
-that fails parsing becomes a `MALFORMED_RESPONSE` error before any result
-component mounts.
+`lib/v2/contract-schema.ts` holds pure parsers for the Quick Brief result, agenda
+response, and roundtable result. They reference no environment, credentials, or
+network code, so the module ships in the client bundle. The server-side Quick
+writer parser and browser-side `/api/brief` response parser use the same semantic
+validator for the nested brief: `mode` must be `quick` and `evidence.status` must
+be `not_researched`, which in turn forbids sources, evidence claims, and high
+confidence. The endpoint response parser also requires the budget and diagnostics
+the endpoint always reports.
+
+The legacy endpoint parsers bind successful responses to their request snapshots:
+
+- Agenda responses are deeply parsed, then must echo the trimmed request idea and
+  selected panel mode.
+- Roundtable responses must echo the request agenda after the same trimming,
+  blank-removal, and stable de-duplication used by the server, preserve its order,
+  echo the selected panel mode, and include diagnostics.
+- The fixed transcript is checked against client-safe shared constants: three
+  rounds and the selected panel's five public agent names, in the same
+  round-and-agent order executed by the server.
+- The moderator's structured summary uses the same pure field, size, and list
+  parser before the server returns it and before the browser renders it.
+
+Separate display parsers accept shipped samples that have no run diagnostics. A
+body that fails its endpoint parser becomes a `MALFORMED_RESPONSE` error before
+any result component mounts.
 
 A class-based error boundary around result rendering is the last resort: it
-renders the same notice, moves focus to it like the other error paths, resets when
-the owner sets a new result (an epoch counter, so re-showing the same sample object
-also resets it), and neither displays nor logs the caught error. It has no
-automated test by decision: with full validation no legitimate input reaches a
-render failure, and adding a test-only throwing path was rejected.
+renders the same notice, moves focus to it on either an initial-mount or later
+render failure, and neither displays nor logs the caught error. The owner keys the
+boundary by result epoch, so setting a new result creates a fresh boundary even
+when the same sample object is shown again. Permanent browser regression tests
+inject scoped render faults at the browser boundary, without a production test
+hook, and verify safe copy, fallback focus, same-sample recovery, result focus,
+and isolation between result surfaces.
 
 ### 2.4 Focus
 
-Submitting moves focus to the progress region (`role="status"`), a result moves it
-to the result region, an error moves it to the alert. Cancellation never moves
-focus. Programmatic targets use `tabIndex={-1}` so they are not in the Tab order;
-native controls keep their native keyboard behaviour. One `:focus-visible` ring is
-shared by every interactive element and every programmatic target.
+Submitting a Quick Brief moves focus to its progress region (`role="status"`);
+the Quick result and View sample action move focus to the Quick result region.
+Request errors move focus to the alert. Cancellation never moves focus. A pending
+result focus normally clears after its target mounts, which also covers recovery
+from the result boundary; input invalidation or switching to a legacy workflow
+retires that intent without moving focus. Programmatic targets use
+`tabIndex={-1}` so they are not in the Tab order; native controls keep their native
+keyboard behaviour. One `:focus-visible` ring is shared by every interactive
+element and every programmatic target.
 
 ## 3. Test layers and what each one can claim
 
 | Layer | Tool | Boundary |
 | --- | --- | --- |
 | Unit | Vitest | Parsers, code-to-message policy, request helpers with a stubbed `fetch`. |
-| Browser integration | Playwright, Chromium only | Real production build of the page; every `/api/*` call is fulfilled by a route mock in the browser. Not end-to-end: the Next.js route handlers and model calls are not exercised. |
+| Browser integration | Playwright, Chromium only | Real production build of the page; every page-originated `/api/*` call is fulfilled by a route mock in the browser. Not end-to-end: the Next.js route handlers and model calls are not exercised. |
 | Server guard | Playwright `APIRequestContext` | Bypasses page routing to prove the test server has no provider credentials and refuses model execution. |
 | Accessibility scan | axe-core via `@axe-core/playwright` | Default rule set, no exclusions. Zero violations means no automatically detectable violations in the scanned state, not WCAG conformance. Every scan leaves one `color-contrast` rule as "needs review" (translucent panels over a gradient); `tests/contrast.test.ts` verifies representative palette combinations read from `globals.css`, not axe's individual nodes. |
-| Fault injection | manual, five runs | Faults were injected one or two at a time and the suite re-run each time: removed cancellation; removed the identity check in the Quick Brief, agenda, and roundtable continuations; removed the synchronous in-flight guard; removed result focus; removed the retryable gate; removed the tablet reflow; forced a 700px action row. Each made the corresponding test fail. This is targeted fault injection, not systematic mutation testing. |
+| Fault injection | targeted local runs | Faults were injected one or two at a time and the suite re-run each time: removed cancellation; removed the identity check in the Quick Brief, agenda, and roundtable continuations; removed the synchronous in-flight guard; removed result focus; removed the retryable gate; removed the tablet reflow; forced a 700px action row. Each made the corresponding test fail. This is targeted fault injection, not systematic mutation testing. |
 
 Provider access is disabled during deterministic tests: the Playwright web server
-is started with an empty `ANTHROPIC_API_KEY`, route mocks answer every API call in
-the browser, and the server-guard test confirms the refusal path. Browser-side
+is started with an empty `ANTHROPIC_API_KEY`, route mocks answer every page-originated
+API call in the browser, and the server-guard test confirms the refusal path. Browser-side
 interception cannot observe server egress; the empty key and the guard test are
 what make the claim credible.
 
@@ -130,8 +149,8 @@ what make the claim credible.
 
 - Legacy flows (agenda, roundtable) now share the same cancellation and error
   handling as the Quick Brief, at the cost of one more ref each.
-- The client bundle includes the contract parsers (a few kilobytes). Verified after
-  a production build: no client chunk contains provider hostnames, header names,
+- The client bundle includes the pure contract parsers. Verified after a production
+  build: no client chunk contains provider hostnames, header names,
   the key variable name, or the server observability code.
-- The sample-only public deployment is unchanged: its server-side guard still
-  rejects every model-backed route regardless of configured keys.
+- The sample-mode server guard is unchanged in this code: it rejects every
+  model-backed route regardless of configured keys.

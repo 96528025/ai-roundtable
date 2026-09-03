@@ -1,10 +1,10 @@
-# Moderator synthesis truncation — 40% of evaluation runs discarded
+# Moderator synthesis failures — 40% of evaluation runs discarded
 
 **Date:** 2026-08-04
 **Status:** Fixed and re-measured
 **Affected commit:** `199d6b6`
 **Severity:** Every failure discarded fifteen successful, already-paid model calls — and the
-surviving subset produced a quality conclusion that turned out to be false.
+surviving subset invited a quality conclusion that the corrected run did not reproduce.
 
 ---
 
@@ -49,7 +49,7 @@ From the diagnostics of a comparable successful run:
 The workflow has no intermediate persistence, so a failure at the last step throws away
 everything earlier. **The cheapest call in the workflow was the one that could destroy it.**
 
-## 3. Root cause
+## 3. Working diagnosis
 
 `extractJsonObject` locates the report by scanning for the first `{` and the last `}`:
 
@@ -63,16 +63,16 @@ The summary schema is flat — one object, no nesting — so a response cut off 
 contains an opening brace and **no closing brace at all**. `end` is `-1` and the parse
 throws.
 
-Why was it cut off? The synthesis call was capped at `maxTokens: 1200`. A successful run
+Why might it have been cut off? The synthesis call was capped at `maxTokens: 1200`. A successful run
 logged:
 
 ```json
 {"stage":"moderator_synthesis","outputTokens":966,"durationMs":23327}
 ```
 
-**966 against a ceiling of 1200 — 20% headroom.** The two failing cases produced longer
-transcripts (five agenda topics each, denser discussion), so their reports ran past the
-ceiling and were truncated.
+**966 against a ceiling of 1200 — 20% headroom.** The two failing cases had longer
+transcripts (five agenda topics each, denser discussion), making a report that reached the
+ceiling a plausible explanation for the missing closing brace.
 
 This was a hypothesis, not a fact, at the time of diagnosis: the code did not record
 Anthropic's `stop_reason`, so there was no way to distinguish "model was cut off" from
@@ -110,8 +110,8 @@ inferred from token arithmetic. This changes nothing about behaviour; it makes t
 observable.
 
 **2. Raise the synthesis ceiling from 1,200 to 2,000 tokens** (`lib/debate.ts`)
-Roughly doubles the headroom over the observed 966-token output. This addresses the actual
-cause rather than the symptom.
+Roughly doubles the headroom over the comparable observed 966-token output. This tests the
+working diagnosis while reducing the likelihood of the same failure mode.
 
 **3. Resample the synthesis on an unparseable report** (`lib/debate.ts`)
 Up to two additional attempts (`moderator_synthesis.resample_1`, `resample_2`) before the
@@ -157,7 +157,7 @@ These are regression tests, not smoke tests: with `MODERATOR_PARSE_ATTEMPTS` set
 Full suite after the change: **26 passed, 5 skipped** (`npm test`), plus `typecheck`,
 `lint`, and `build` clean.
 
-## 7. Re-measurement — and a false conclusion the fix retracted
+## 7. Re-measurement — and an unsupported conclusion the corrected run did not reproduce
 
 The suite was re-run after the fix. **All five cases completed.**
 
@@ -168,10 +168,10 @@ The suite was re-run after the fix. **All five cases completed.**
 | Resamples triggered | n/a | **0** |
 | Transport retries | 0 | 0 |
 
-**No case needed a resample.** Raising the ceiling was sufficient on its own; the resample
-loop never fired and now sits as a backstop rather than a crutch. That is the intended
-shape of the fix — the root cause is gone, and the safety net is there for the residual
-case where the model deviates for some other reason.
+**No case needed a resample.** The ceiling increase was the only recovery mechanism exercised
+in the corrected run; the resample loop never fired and now sits as a backstop rather than a
+crutch. The original failure did not reproduce, but without stop-reason data from that run
+the truncation diagnosis remains circumstantial.
 
 ### The part that matters more than the bug
 
@@ -181,7 +181,7 @@ same check, `next_step_actionability`. There was even a tidy mechanism available
 it — synthesising five hedged positions ought to yield a more qualified recommendation than
 answering once.
 
-**That conclusion was wrong, and the re-run retracted it:**
+**That conclusion was not supported by the complete re-run:**
 
 | Case | Before | After | Control |
 | --- | ---: | ---: | ---: |
@@ -192,17 +192,17 @@ answering once.
 | campus event organizer | **75** | **100** | 100 |
 | **Average** | **83.3** | **100** | **100** |
 
-The two cases that scored 75 were not producing vaguer recommendations because of
-deliberation. They were producing vaguer recommendations because the moderator was writing
-against a ceiling it could not fit a concrete next step under. **The measuring instrument
-caused the finding.**
+The two cases that scored 75 produced more concrete recommendations after the synthesis
+ceiling was raised. That pattern is consistent with the moderator running out of room before
+it could fit a concrete next step, but the failing run predates stop-reason logging, so the
+causal explanation remains an inference rather than a directly observed fact.
 
-The lesson is not "check your token limits." It is that the failed cases and the suspicious
-result had the same root cause, and the result was the more dangerous of the two: a crash
-announces itself, a plausible number does not. The 40% failure rate was what forced a look
-at the configuration at all. Had the suite been slightly more robust — three failures
-instead of five, or a ceiling that truncated only the longest case — the false conclusion
-would have shipped unnoticed, with a mechanism ready to justify it.
+The lesson is not merely "check your token limits." The failed cases and the suspicious
+score gap shared the same circumstantial signature, and the score was the more dangerous
+signal: a crash announces itself, while a plausible number does not. The 40% failure rate
+was what forced a look at the configuration at all. Had only the three completed cases been
+retained, the misleading conclusion could have survived with a tidy mechanism ready to
+justify it.
 
 ### Corrected result
 
@@ -210,10 +210,13 @@ would have shipped unnoticed, with a mechanism ready to justify it.
 | --- | ---: | ---: | ---: |
 | Shared brief score (5 cases) | 100 | 100 | 0-point delta |
 | Model calls per case | 16 | 1 | 16.0× |
-| Total tokens | 183,189 | 4,831 | 38.1× |
-| Total duration | 684.8 s | 97.5 s | 7.1× |
+| Total tokens | 183,189 | 4,831 | 37.9× |
+| Total duration | 684.8 s | 97.5 s | 7.0× |
+| Mean of the five paired per-case ratios | — | — | 38.1× tokens · 7.1× duration |
 
-**Equal measured quality at 38× the tokens.** Not worse — but not better, and expensive.
+**Across these five cases the shared structural rubric did not distinguish the fixed roundtable from the single-pass control.** The fixed roundtable used 37.9× the tokens and 7.0× the time in aggregate; 38.1× and 7.1× are the means of the five paired per-case ratios.
+
+The committed artifact records commit `8c353bb` with `"dirty": true`. Its uncommitted diff was not preserved, so the exact working tree cannot be reconstructed; treat these numbers as directional evidence rather than a cleanly reproducible benchmark.
 
 ## 8. What is still unproven
 
@@ -225,9 +228,9 @@ would have shipped unnoticed, with a mechanism ready to justify it.
 - **The recovery rate of the resample is untested in production.** It has never fired
   outside `tests/synthesis.test.ts`.
 - **The rubric saturates.** All ten runs scored 100. The evaluator can reject an unusable
-  brief but cannot rank two adequate ones, so "equal quality" means "equally above a low
-  bar," not "indistinguishable." Any stronger claim needs a discriminating rubric or
-  blinded human review.
+  brief but cannot rank two adequate ones, so the tie means only that this structural
+  rubric did not distinguish the two treatments in these five cases. Any broader quality
+  comparison needs a discriminating rubric or blinded human review.
 - **Five cases is still small,** and each was run once at non-zero temperature. Run-to-run
   variance has not been measured.
 

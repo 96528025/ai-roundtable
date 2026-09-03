@@ -113,9 +113,10 @@ export default function Home() {
   const [isPreparing, setIsPreparing] = useState(false);
   const [isRunningRoundtable, setIsRunningRoundtable] = useState(false);
   const [pendingFocus, setPendingFocus] = useState<FocusTarget | null>(null);
-  // Bumped whenever a result is (re)set so a tripped render boundary resets even
-  // when the same object (the sample) is shown again.
-  const [resultEpoch, setResultEpoch] = useState(0);
+  // Kept per result surface so recovering one boundary cannot remount another.
+  // The Quick epoch also permits re-showing the same sample object after a fault.
+  const [quickResultEpoch, setQuickResultEpoch] = useState(0);
+  const [roundtableResultEpoch, setRoundtableResultEpoch] = useState(0);
   // Set from an effect, so it is present only once React has hydrated the page.
   const [hydrated, setHydrated] = useState(false);
 
@@ -134,9 +135,13 @@ export default function Home() {
         : pendingFocus === "result"
           ? resultRef.current
           : errorRef.current;
-    target?.focus();
+    // A result boundary may still be showing its fallback during this commit.
+    // Keep the request pending until the intended target actually mounts; a
+    // new result epoch reruns this effect after the boundary is replaced.
+    if (!target) return;
+    target.focus();
     setPendingFocus(null);
-  }, [pendingFocus]);
+  }, [pendingFocus, quickResultEpoch]);
 
   useEffect(() => {
     setHydrated(true);
@@ -186,10 +191,6 @@ export default function Home() {
     setFailure((current) => (current?.source === "roundtable" ? null : current));
   }
 
-  function showResult() {
-    setResultEpoch((epoch) => epoch + 1);
-  }
-
   function resetAllResults() {
     cancelAllRequests();
     setAgenda(null);
@@ -197,6 +198,7 @@ export default function Home() {
     setQuickResultSource(null);
     setRoundtableResult(null);
     setFailure(null);
+    setPendingFocus(null);
   }
 
   function chooseExample(example: string) {
@@ -207,6 +209,7 @@ export default function Home() {
   }
 
   function choosePanel(nextPanel: PanelMode) {
+    if (nextPanel === panelMode) return;
     setPanelMode(nextPanel);
     // The panel only shapes Full Roundtable work; a pending Quick Brief stays valid.
     cancelAgenda();
@@ -226,7 +229,7 @@ export default function Home() {
     setQuickResult(demoQuickResult);
     setQuickResultSource("sample");
     setFailure(null);
-    showResult();
+    setQuickResultEpoch((epoch) => epoch + 1);
     setPendingFocus("result");
   }
 
@@ -255,7 +258,7 @@ export default function Home() {
     if (outcome.status === "success") {
       setQuickResult(outcome.data);
       setQuickResultSource("live");
-      showResult();
+      setQuickResultEpoch((epoch) => epoch + 1);
       setPendingFocus("result");
     } else if (outcome.status === "error") {
       setFailure({ error: outcome.error, source: "quick" });
@@ -272,6 +275,7 @@ export default function Home() {
     if (requestInFlight()) return;
 
     const controller = beginRequest(agendaRequestRef);
+    setPendingFocus(null);
     setFailure(null);
     setAgenda(null);
     setRoundtableResult(null);
@@ -326,6 +330,7 @@ export default function Home() {
     if (!agenda || requestInFlight()) return;
 
     const controller = beginRequest(roundtableRequestRef);
+    setPendingFocus(null);
     setFailure(null);
     setRoundtableResult(null);
     setIsRunningRoundtable(true);
@@ -342,7 +347,7 @@ export default function Home() {
 
     if (outcome.status === "success") {
       setRoundtableResult(outcome.data);
-      showResult();
+      setRoundtableResultEpoch((epoch) => epoch + 1);
     } else if (outcome.status === "error") {
       setFailure({ error: outcome.error, source: "roundtable" });
       setPendingFocus("error");
@@ -550,7 +555,7 @@ export default function Home() {
       ) : null}
 
       {quickResult && quickResultSource ? (
-        <ResultErrorBoundary resetKey={resultEpoch} fallbackMessage={QUICK_BRIEF_FALLBACK_MESSAGE}>
+        <ResultErrorBoundary key={quickResultEpoch} fallbackMessage={QUICK_BRIEF_FALLBACK_MESSAGE}>
           <QuickBriefReport
             ref={resultRef}
             result={quickResult}
@@ -639,7 +644,10 @@ export default function Home() {
       ) : null}
 
       {roundtableResult ? (
-        <ResultErrorBoundary resetKey={resultEpoch} fallbackMessage={ROUNDTABLE_FALLBACK_MESSAGE}>
+        <ResultErrorBoundary
+          key={roundtableResultEpoch}
+          fallbackMessage={ROUNDTABLE_FALLBACK_MESSAGE}
+        >
           <section className="results" aria-label="Full Roundtable result">
             <div className="meetingContext">
               <span>Full Roundtable · fixed baseline</span>

@@ -37,9 +37,13 @@ test("initial interactive form has no axe violations", async ({ page }) => {
 });
 
 test("loading state has no axe violations", async ({ page, brief }) => {
-  await startPendingQuickBrief(page, brief);
-  await expect(quickBriefStatus(page)).toBeFocused();
-  await expectNoAxeViolations(page, "loading");
+  const release = await startPendingQuickBrief(page, brief);
+  try {
+    await expect(quickBriefStatus(page)).toBeFocused();
+    await expectNoAxeViolations(page, "loading");
+  } finally {
+    release.resolve();
+  }
 });
 
 test("success result has no axe violations", async ({ page, brief }) => {

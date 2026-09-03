@@ -97,14 +97,10 @@ for (const viewport of viewports) {
   test.describe(viewport.name, () => {
     test.use({ viewport: { width: viewport.width, height: viewport.height } });
 
-    test("form, success, sample, and error states fit the viewport without overlap or clipping", async ({
-      page,
-      brief
-    }) => {
+    test("initial form fits the viewport without overlap or clipping", async ({ page }) => {
       await openInteractiveForm(page);
       await page.getByLabel("Product idea").fill(IDEA);
 
-      // Initial form. The example-idea grid is the visible marker of each breakpoint.
       await expectNoHorizontalOverflow(page, "form");
       const exampleColumns = await page
         .getByRole("group", { name: "Example ideas" })
@@ -132,8 +128,11 @@ for (const viewport of viewports) {
         "focused primary button",
         FOCUS_RING_MARGIN
       );
+    });
 
-      // Success result
+    test("success result fits the viewport without overlap or clipping", async ({ page, brief }) => {
+      await openInteractiveForm(page);
+      await page.getByLabel("Product idea").fill(IDEA);
       const results = await reachSuccess(page, brief);
       await expectNoHorizontalOverflow(page, "success");
       await expectInsideViewport(page, results, "results region", FOCUS_RING_MARGIN);
@@ -151,8 +150,10 @@ for (const viewport of viewports) {
         await summary.click();
       }
       await expectNoHorizontalOverflow(page, "success with disclosures open");
+    });
 
-      // Sample result: exercises the "deeper analysis" call-to-action block.
+    test("sample and deeper-analysis call to action fit the viewport", async ({ page }) => {
+      await openInteractiveForm(page);
       await page.getByRole("button", { name: "View sample" }).click();
       const sample = quickBriefResults(page);
       await expect(sample).toBeFocused();
@@ -167,9 +168,12 @@ for (const viewport of viewports) {
         },
         { label: "deeper-analysis button", locator: deeperButton }
       ]);
+    });
 
-      // API error
+    test("API error fits the viewport without clipping", async ({ page, brief }) => {
       brief.respondWith(() => retryableOverloadedError);
+      await openInteractiveForm(page);
+      await page.getByLabel("Product idea").fill(IDEA);
       await page.getByRole("button", { name: "Create Quick Brief" }).click();
       const alert = errorAlert(page);
       await expect(alert).toBeFocused();
@@ -188,6 +192,7 @@ for (const viewport of viewports) {
         page,
         brief
       }) => {
+        test.slow();
         await openInteractiveForm(page);
         await expectNoAxeViolations(page, `initial form @ ${viewport.width}px`);
         await page.getByLabel("Product idea").fill(IDEA);

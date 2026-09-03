@@ -1,6 +1,11 @@
 import { demoResult } from "../../../lib/demo";
+import {
+  normalizeRoundtableAgenda,
+  PANEL_AGENT_NAMES,
+  ROUNDTABLE_ROUNDS
+} from "../../../lib/roundtable-contract";
 import type { QuickBriefResult } from "../../../lib/v2/types";
-import type { RoundtableResult } from "../../../types";
+import type { PanelMode, RoundtableResult } from "../../../types";
 import { ideaBriefFixture, ideaFrameFixture } from "../../v2-fixtures";
 
 /**
@@ -55,8 +60,26 @@ export function agendaResponseFor(idea: string) {
   };
 }
 
-/** The shipped sample roundtable doubles as a valid /api/roundtable success body. */
-export const roundtableResult: RoundtableResult = demoResult;
+/** Build a complete /api/roundtable success body whose request echoes match. */
+export function roundtableResponseFor(
+  topics: readonly string[],
+  panelMode: PanelMode = "startup"
+): RoundtableResult {
+  const agentNames = PANEL_AGENT_NAMES[panelMode];
+  return {
+    ...demoResult,
+    agenda: normalizeRoundtableAgenda(topics),
+    panelMode,
+    transcript: ROUNDTABLE_ROUNDS.flatMap((round) =>
+      agentNames.map((agentName, index) => ({
+        round,
+        agentName,
+        content: demoResult.transcript[(round - 1) * agentNames.length + index].content
+      }))
+    ),
+    diagnostics: quickBriefResult.diagnostics
+  };
+}
 
 /** Strings planted in mocked error bodies that must never reach the page. */
 export const LEAKED_STACK = "at callClaude (lib/claude.ts:221:9)";

@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { routeIdea } from "@/lib/v2/planner";
+import { demoResult } from "@/lib/demo";
 import { demoQuickResult } from "@/lib/v2/demo";
-import { parseQuickBriefDisplayValue } from "@/lib/v2/contract-schema";
+import {
+  parseQuickBriefDisplayValue,
+  parseRoundtableDisplayValue
+} from "@/lib/v2/contract-schema";
 import {
   normalizeIdeaRequest,
   parseIdeaBrief,
@@ -65,6 +69,10 @@ describe("V2 idea contracts", () => {
     expect(parseQuickBriefDisplayValue({ ...demoQuickResult, budget: undefined })).toEqual(
       demoQuickResult
     );
+  });
+
+  it("keeps the shipped roundtable sample valid against its display contract", () => {
+    expect(parseRoundtableDisplayValue(demoResult)).toEqual(demoResult);
   });
 
   it("rejects high confidence when external research was not run", () => {

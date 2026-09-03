@@ -1,13 +1,14 @@
 import { isAppErrorCode, type AppErrorCode } from "@/lib/errors";
 import {
   ContractSchemaError,
-  parseAgendaResponseValue,
+  parseAgendaApiResponseValue,
   parseQuickBriefApiResponseValue,
-  parseRoundtableResultValue,
-  type AgendaResponse
+  parseRoundtableApiResponseValue,
+  type AgendaResponse,
+  type RoundtableApiResponse
 } from "@/lib/v2/contract-schema";
 import type { QuickBriefResult } from "@/lib/v2/types";
-import type { PanelMode, RoundtableResult } from "@/types";
+import type { PanelMode } from "@/types";
 
 export type { AgendaResponse };
 
@@ -43,14 +44,14 @@ export const NETWORK_ERROR_MESSAGE =
 const validationCodes = [
   "INVALID_REQUEST",
   "INVALID_IDEA",
-  "INVALID_AGENDA",
-  "LIVE_MODE_DISABLED"
+  "INVALID_AGENDA"
 ] as const satisfies readonly AppErrorCode[];
 
 /** Fixed client copy for service-side failures. INTERNAL_ERROR uses the caller's fallback. */
 export const serviceErrorMessages: Readonly<
   Record<Exclude<AppErrorCode, (typeof validationCodes)[number] | "INTERNAL_ERROR">, string>
 > = {
+  LIVE_MODE_DISABLED: "Live model execution is disabled in this sample-only deployment.",
   SERVICE_CONFIGURATION: "This server is not configured for live model execution.",
   UPSTREAM_AUTHENTICATION:
     "The AI service rejected the server's credentials. Live briefs are unavailable until the server configuration is fixed.",
@@ -212,13 +213,25 @@ export async function requestAgenda(
   signal?: AbortSignal
 ): Promise<RequestOutcome<AgendaResponse>> {
   const outcome = await postJson("/api/agenda", body, AGENDA_FALLBACK_MESSAGE, signal);
-  return parseSuccess(outcome, parseAgendaResponseValue, AGENDA_FALLBACK_MESSAGE);
+  return parseSuccess(
+    outcome,
+    (value) => parseAgendaApiResponseValue(value, body),
+    AGENDA_FALLBACK_MESSAGE
+  );
 }
 
 export async function requestRoundtable(
   body: { idea: string; panelMode: PanelMode; topics: string[] },
   signal?: AbortSignal
-): Promise<RequestOutcome<RoundtableResult>> {
+): Promise<RequestOutcome<RoundtableApiResponse>> {
   const outcome = await postJson("/api/roundtable", body, ROUNDTABLE_FALLBACK_MESSAGE, signal);
-  return parseSuccess(outcome, parseRoundtableResultValue, ROUNDTABLE_FALLBACK_MESSAGE);
+  return parseSuccess(
+    outcome,
+    (value) =>
+      parseRoundtableApiResponseValue(value, {
+        agenda: body.topics,
+        panelMode: body.panelMode
+      }),
+    ROUNDTABLE_FALLBACK_MESSAGE
+  );
 }

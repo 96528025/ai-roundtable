@@ -31,8 +31,8 @@ export default defineConfig({
       // Browser tests exercise the interactive Quick Brief page, never the
       // sample-only branch. An explicit value also wins over any .env.local.
       NEXT_PUBLIC_DEMO_MODE: "",
-      // Defense in depth: every /api/brief call is fulfilled by route mocks, and
-      // even an un-mocked request cannot reach a model provider without a key.
+      // Defense in depth: page-originated API calls are fulfilled by route mocks,
+      // and even the server-guard request cannot reach a provider without a key.
       ANTHROPIC_API_KEY: ""
     }
   }
