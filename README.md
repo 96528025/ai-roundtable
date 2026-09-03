@@ -6,7 +6,7 @@
 
 AI Roundtable helps a builder decide what deserves implementation before spending time on a polished product. The default experience is a bounded **Quick Brief**: the user describes an idea once, a Planner extracts the decision structure, and a brief writer returns an honest verdict, narrow MVP, technical direction, distribution hypothesis, monetization reality check, risks, and a seven-day validation plan.
 
-The original five-agent, three-round workflow remains available as **Full Roundtable** and as an explicit evaluation baseline. It is no longer the default. A subsequent five-case paired evaluation found the same structural-rubric score for both approaches while the fixed roundtable used 38.1× the tokens and 7.1× the wall-clock time of a one-call control; see [the committed baseline and its caveats](#committed-legacy-paired-baseline), including the fact that the run is recorded against a dirty working tree.
+The original five-agent, three-round workflow remains available as **Full Roundtable** and as an explicit evaluation baseline. It is no longer the default. In a subsequent five-case paired evaluation the structural rubric did not distinguish the two approaches, while the fixed roundtable used 37.9× the tokens and 7.0× the wall-clock time of a one-call control in aggregate (38.1× and 7.1× as the mean of per-case ratios); see [the committed baseline and its caveats](#committed-legacy-paired-baseline), including the fact that the run is recorded against a dirty working tree.
 
 ## Product Modes
 
@@ -116,7 +116,7 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000). Select **View sample** to inspect the complete Quick Brief interface without configuring a key.
 
-### Safe public portfolio mode
+### Safe public sample mode
 
 Set the following non-secret variable and leave `ANTHROPIC_API_KEY` unset:
 
@@ -248,7 +248,7 @@ All deterministic tests run with provider access disabled: no key is configured,
 | Unit | `npm test` | Contract parsers, error-code policy, budgets, routes with a stubbed transport, colour contrast of the palette | Node only |
 | Browser integration | `npm run test:browser` | The real production build in Chromium: keyboard flow, focus management, retry and cancellation, stale-response guards, viewport layout at 1280 / 880 / 390 px | Every `/api/*` call is fulfilled by a route mock in the browser. Route handlers and model calls are not exercised, so these are not end-to-end tests. Chromium only. |
 | Server guard | part of `npm run test:browser` | An un-mocked request to `/api/brief` is refused with `503 SERVICE_CONFIGURATION` | Proves the test server has no provider credentials |
-| Accessibility scan | part of `npm run test:browser` | axe-core, default rule set, no exclusions, over the initial form, loading, success, and error states, plus the form and result at 880 and 390 px | Zero violations means no automatically detectable violations in the scanned states. It is not a WCAG conformance claim. Contrast pairs axe cannot resolve are checked by `tests/contrast.test.ts` from the palette in `globals.css`. |
+| Accessibility scan | part of `npm run test:browser` | axe-core, default rule set, no exclusions, over the initial form, loading, success, and error states, plus the form and result at 880 and 390 px | Zero violations means no automatically detectable violations in the scanned states. It is not a WCAG conformance claim. Every scan still reports one `color-contrast` rule as "needs review" because the panels are translucent over a gradient; `tests/contrast.test.ts` verifies representative palette combinations read from `globals.css`, not axe's individual nodes. |
 
 Before the first browser run, install the pinned Chromium build:
 
@@ -258,7 +258,7 @@ npm run test:browser:install
 
 Vitest collects `tests/**/*.test.ts` and `evals/**/*.test.ts`; Playwright collects `tests/browser/**/*.spec.ts`. The two runners never see each other's files.
 
-Continuous integration runs four required checks on every pull request, `typecheck`, `lint`, `test` (Vitest and Playwright), and `build`, on Node 22 with no secrets available to the workflow.
+Continuous integration runs four checks on every pull request, `typecheck`, `lint`, `test` (Vitest and Playwright), and `build`, on Node 22 with no secrets available to the workflow.
 
 ## Evaluation
 
@@ -299,10 +299,11 @@ Five cases, `claude-sonnet-4-6`, generated 2026-08-04 (`evals/results/latest.jso
 | Shared structural brief score | 100 | 100 | 0-point delta |
 | Cases passing the rubric | 5 / 5 | 5 / 5 | — |
 | Model-call attempts per case | 16 | 1 | 16.0× |
-| Total tokens across five cases | 183,189 | 4,831 | 38.1× |
-| Total duration across five cases | 684.8 s | 97.5 s | 7.1× |
+| Total tokens across five cases | 183,189 | 4,831 | 37.9× |
+| Total duration across five cases | 684.8 s | 97.5 s | 7.0× |
+| Mean of the five paired per-case ratios | — | — | 38.1× tokens · 7.1× duration |
 
-**The fixed roundtable buys no measurable brief-quality advantage over one direct call, at 38× the tokens and 7× the wall-clock time.**
+**Across these five cases the structural rubric did not separate the fixed roundtable from one direct call, while the roundtable used roughly 38× the tokens and 7× the wall-clock time.** The ratio column divides five-case totals; the results file also records the mean of the five per-case ratios, listed separately above, which is slightly higher because averaging ratios weights the cheaper cases more.
 
 Two caveats belong with that number. First, every one of the ten runs scored 100: the structural rubric saturates, so it can reject an unusable brief but cannot rank two adequate ones. Any claim finer than "not worse" needs a rubric that discriminates, or blinded human review. Second, an earlier partial run of this same suite appeared to show the roundtable scoring *lower* (83.3 vs 100). That result was an artifact of a 1,200-token ceiling on the synthesis call, not a property of deliberation; raising the ceiling removed the gap entirely. See [docs/2026-08-04-moderator-truncation.md](docs/2026-08-04-moderator-truncation.md).
 

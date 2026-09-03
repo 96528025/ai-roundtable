@@ -86,10 +86,21 @@ client now parses that body as untrusted input (`lib/api-client.ts`):
 agenda response, and the roundtable result. They reference no environment,
 credentials, or network code, so the module ships in the client bundle; the server
 wraps the same parsers to validate model output, which keeps one definition of the
-contract. A body that fails parsing becomes a `MALFORMED_RESPONSE` error before any
-result component mounts. A class-based error boundary around result rendering is
-the last resort: it renders the same notice and neither displays nor logs the
-caught error.
+contract. Parsers are endpoint-specific: the `/api/brief` parser requires the run
+budget and diagnostics the endpoint always reports and enforces Quick Brief
+semantics (`mode: quick`, `evidence.status: not_researched`, which in turn forbids
+sources, evidence claims, and high confidence), the agenda parser validates the
+echoed panel mode, and the roundtable parser requires a non-empty transcript. A
+separate display parser accepts the shipped sample, which has no run data. A body
+that fails parsing becomes a `MALFORMED_RESPONSE` error before any result
+component mounts.
+
+A class-based error boundary around result rendering is the last resort: it
+renders the same notice, moves focus to it like the other error paths, resets when
+the owner sets a new result (an epoch counter, so re-showing the same sample object
+also resets it), and neither displays nor logs the caught error. It has no
+automated test by decision: with full validation no legitimate input reaches a
+render failure, and adding a test-only throwing path was rejected.
 
 ### 2.4 Focus
 
@@ -106,7 +117,7 @@ shared by every interactive element and every programmatic target.
 | Unit | Vitest | Parsers, code-to-message policy, request helpers with a stubbed `fetch`. |
 | Browser integration | Playwright, Chromium only | Real production build of the page; every `/api/*` call is fulfilled by a route mock in the browser. Not end-to-end: the Next.js route handlers and model calls are not exercised. |
 | Server guard | Playwright `APIRequestContext` | Bypasses page routing to prove the test server has no provider credentials and refuses model execution. |
-| Accessibility scan | axe-core via `@axe-core/playwright` | Default rule set, no exclusions. Zero violations means no automatically detectable violations in the scanned state, not WCAG conformance. Colour-contrast checks axe cannot resolve (translucent panels over a gradient) are covered by `tests/contrast.test.ts`, which reads the palette from `globals.css`. |
+| Accessibility scan | axe-core via `@axe-core/playwright` | Default rule set, no exclusions. Zero violations means no automatically detectable violations in the scanned state, not WCAG conformance. Every scan leaves one `color-contrast` rule as "needs review" (translucent panels over a gradient); `tests/contrast.test.ts` verifies representative palette combinations read from `globals.css`, not axe's individual nodes. |
 | Fault injection | manual, five runs | Faults were injected one or two at a time and the suite re-run each time: removed cancellation; removed the identity check in the Quick Brief, agenda, and roundtable continuations; removed the synchronous in-flight guard; removed result focus; removed the retryable gate; removed the tablet reflow; forced a 700px action row. Each made the corresponding test fail. This is targeted fault injection, not systematic mutation testing. |
 
 Provider access is disabled during deterministic tests: the Playwright web server
