@@ -1,5 +1,7 @@
 # AI Roundtable
 
+[![CI](https://github.com/96528025/ai-roundtable/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/96528025/ai-roundtable/actions/workflows/ci.yml)
+
 > Turn a vague product idea into an evidence-aware pre-build decision.
 
 **[Open the sample-only public demo](https://ai-roundtable-mu.vercel.app)** · [Review the committed evaluation baseline](evals/results/latest.json)
