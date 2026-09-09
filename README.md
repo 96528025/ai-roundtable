@@ -89,6 +89,7 @@ Key boundaries:
 | Model integration | Anthropic Messages API via server-side `fetch` |
 | Testing | Vitest (unit); Playwright with axe-core (browser integration, Chromium); GitHub Actions |
 | Persistence | Optional local JSON history for legacy Full runs |
+| Deployment | Vercel, in sample-only mode: `NEXT_PUBLIC_DEMO_MODE=sample`, no provider key, model-backed routes refused server-side with `403` |
 
 LangGraph is intentionally not included. The current bounded TypeScript workflow does not yet need durable human interrupts, cross-process checkpoint recovery, or multiple conditional cycles.
 
