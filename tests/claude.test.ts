@@ -4,6 +4,7 @@ import type { RunObserver } from "@/lib/observability";
 import type { ModelCallMetric } from "@/types";
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
 });
@@ -176,5 +177,69 @@ describe("Anthropic client observability", () => {
     });
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("times out a response whose body stalls after the headers arrive", async () => {
+    vi.useFakeTimers();
+    vi.stubEnv("ANTHROPIC_API_KEY", "test-key");
+    vi.stubEnv("ANTHROPIC_TIMEOUT_MS", "1000");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_url: string, init: RequestInit) => {
+        // Headers and part of the body arrive; the rest never does until the request aborts.
+        const body = new ReadableStream<Uint8Array>({
+          start(stream) {
+            stream.enqueue(new TextEncoder().encode('{"content": ['));
+            init.signal?.addEventListener("abort", () =>
+              stream.error(new DOMException("The operation was aborted.", "AbortError"))
+            );
+          }
+        });
+        return Promise.resolve(
+          new Response(body, { status: 200, headers: { "content-type": "application/json" } })
+        );
+      })
+    );
+    const metrics: ModelCallMetric[] = [];
+
+    const call = callClaude([{ role: "user", content: "idea" }], "system", {
+      stage: "stalled_body_stage",
+      observer: collectingObserver(metrics),
+      maxRetries: 0
+    });
+    const outcome = expect(call).rejects.toMatchObject({
+      code: "UPSTREAM_TIMEOUT",
+      status: 504,
+      retryable: true
+    });
+    await vi.advanceTimersByTimeAsync(1_000);
+    await outcome;
+
+    expect(metrics[0]).toMatchObject({
+      stage: "stalled_body_stage",
+      status: "error",
+      errorCategory: "upstream_timeout"
+    });
+  });
+
+  it("still classifies a non-JSON error body by its status code", async () => {
+    vi.stubEnv("ANTHROPIC_API_KEY", "test-key");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response("<html>Bad gateway</html>", {
+          status: 502,
+          headers: { "content-type": "text/html" }
+        })
+      )
+    );
+
+    await expect(
+      callClaude([{ role: "user", content: "idea" }], "system", { maxRetries: 0 })
+    ).rejects.toMatchObject({
+      code: "UPSTREAM_FAILURE",
+      status: 502,
+      retryable: true
+    });
   });
 });

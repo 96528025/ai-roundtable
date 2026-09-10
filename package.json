@@ -17,7 +17,7 @@
     "eval:v2:smoke": "RUN_V2_LIVE_EVALS=true EVAL_CASE_LIMIT=1 vitest run evals/adaptive.eval.test.ts"
   },
   "dependencies": {
-    "next": "^15.0.0",
+    "next": "^15.5.25",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },
