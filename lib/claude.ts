@@ -98,6 +98,19 @@ function retryDelayMs(
   return Math.min(exponential + jitter, MAX_RETRY_DELAY_MS);
 }
 
+/**
+ * Parse the response body. A body that is not JSON reads as empty so the status code
+ * decides the outcome, but a body cut off by the request deadline is a timeout.
+ */
+async function readBody(response: Response, signal: AbortSignal): Promise<AnthropicResponse> {
+  try {
+    return (await response.json()) as AnthropicResponse;
+  } catch (error) {
+    if (signal.aborted) throw error;
+    return {};
+  }
+}
+
 function wait(milliseconds: number, options: ClaudeOptions): Promise<void> {
   if (milliseconds <= 0) return Promise.resolve();
   if (options.sleep) return options.sleep(milliseconds);
@@ -216,6 +229,7 @@ export async function callClaude(
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs());
     let response: Response;
+    let data: AnthropicResponse;
 
     try {
       response = await fetch("https://api.anthropic.com/v1/messages", {
@@ -234,7 +248,10 @@ export async function callClaude(
         }),
         signal: controller.signal
       });
+      // The deadline covers the body as well: headers can arrive while the body stalls.
+      data = await readBody(response, controller.signal);
     } catch (caughtError) {
+      clearTimeout(timeout);
       const error = networkError(caughtError, controller.signal.aborted);
       const shouldRetry = error.retryable && attempt <= retries;
       const delay = shouldRetry ? retryDelayMs(attempt, undefined, options) : undefined;
@@ -247,7 +264,6 @@ export async function callClaude(
         errorCategory: errorCategory(error),
         retryDelayMs: delay
       });
-      clearTimeout(timeout);
 
       if (shouldRetry) {
         await wait(delay ?? 0, options);
@@ -258,7 +274,6 @@ export async function callClaude(
     }
 
     clearTimeout(timeout);
-    const data = (await response.json().catch(() => ({}))) as AnthropicResponse;
     const requestId = response.headers.get("request-id") || data.request_id;
 
     if (!response.ok) {
