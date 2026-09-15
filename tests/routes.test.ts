@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { POST as runRoundtableRoute } from "@/app/api/roundtable/route";
+import { POST as agendaRoute } from "@/app/api/agenda/route";
+import { POST as briefRoute } from "@/app/api/brief/route";
 import { IDEA_MAX_CHARACTERS } from "@/lib/limits";
 
 afterEach(() => {
@@ -84,5 +86,20 @@ describe("roundtable route error contract", () => {
       retryable: true,
       requestId: "req-rate-limit"
     });
+  });
+});
+
+
+describe.each([
+  ["agenda", agendaRoute], ["roundtable", runRoundtableRoute], ["brief", briefRoute]
+] as const)("%s request shape", (_name, route) => {
+  it.each([null, [], "idea"])("rejects non-object JSON before starting model work: %j", async (body) => {
+    vi.stubEnv("NEXT_PUBLIC_DEMO_MODE", "");
+    const fetch = vi.fn();
+    vi.stubGlobal("fetch", fetch);
+    const response = await route(roundtableRequest(body));
+    expect(response.status).toBe(400);
+    expect((await response.json()).code).toBe("INVALID_REQUEST");
+    expect(fetch).not.toHaveBeenCalled();
   });
 });

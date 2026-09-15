@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { parseQuickBriefApiResponseValue } from "@/lib/v2/contract-schema";
 import { runDirectBrief, runQuickBrief } from "@/lib/v2/quick-brief";
 import { ideaBriefFixture, ideaFrameFixture } from "./v2-fixtures";
 
@@ -95,7 +96,7 @@ describe("Planned Quick Brief", () => {
     expect(result.budget.usedCallAttempts).toBe(3);
   });
 
-  it("falls back to a conservative frame when both planner responses are malformed", async () => {
+  it.each([request.goal, "g".repeat(1000)])("returns a valid fallback response for an allowed goal of length %s", async (goal) => {
     vi.stubEnv("ANTHROPIC_API_KEY", "test-key");
     const fetchMock = vi
       .fn()
@@ -104,10 +105,11 @@ describe("Planned Quick Brief", () => {
       .mockResolvedValueOnce(reply(ideaBriefFixture));
     vi.stubGlobal("fetch", fetchMock);
 
-    const result = await runQuickBrief(request);
+    const result = await runQuickBrief({ ...request, goal });
 
     expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(result.planning.status).toBe("fallback");
+    expect(() => parseQuickBriefApiResponseValue(result)).not.toThrow();
     expect(result.frame.routingSignals.ambiguity).toBe("high");
     expect(result.brief).toEqual(ideaBriefFixture);
   });

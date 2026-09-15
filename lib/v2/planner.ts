@@ -92,7 +92,7 @@ export function fallbackIdeaFrame(request: IdeaRequest): IdeaFrame {
     problem:
       "The underlying user problem and its frequency still need direct validation.",
     desiredOutcome:
-      request.goal || "Decide whether this idea deserves validation or implementation.",
+      request.goal?.slice(0, 500) || "Decide whether this idea deserves validation or implementation.",
     currentWorkaround: "The current workaround was not specified by the user.",
     assumptions: [
       "A reachable user segment experiences this problem repeatedly.",

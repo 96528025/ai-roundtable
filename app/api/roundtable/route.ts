@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
+import { readRequestObject } from "@/lib/request";
 import { runRoundtable } from "@/lib/debate";
 import { saveMeeting } from "@/lib/history";
-import { invalidRequest, toPublicError } from "@/lib/errors";
+import { toPublicError } from "@/lib/errors";
 import { assertLiveExecutionEnabled } from "@/lib/v2/validation";
 
 export const runtime = "nodejs";
@@ -9,16 +10,8 @@ export const runtime = "nodejs";
 export async function POST(request: Request) {
   try {
     assertLiveExecutionEnabled();
-    let body: {
-      idea?: unknown;
-      topics?: unknown;
-      panelMode?: unknown;
-    };
-    try {
-      body = (await request.json()) as typeof body;
-    } catch {
-      throw invalidRequest("Request body must be valid JSON.", "INVALID_REQUEST");
-    }
+    const body = await readRequestObject(request);
+
     const idea = typeof body.idea === "string" ? body.idea : "";
 
     const result = await runRoundtable(idea, body.topics, body.panelMode);

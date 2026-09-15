@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { invalidRequest, toPublicError } from "@/lib/errors";
+import { readRequestObject } from "@/lib/request";
+import { toPublicError } from "@/lib/errors";
 import { runQuickBrief } from "@/lib/v2/quick-brief";
 import { assertLiveExecutionEnabled } from "@/lib/v2/validation";
 
@@ -9,12 +10,7 @@ export async function POST(request: Request) {
   try {
     assertLiveExecutionEnabled();
 
-    let body: unknown;
-    try {
-      body = await request.json();
-    } catch {
-      throw invalidRequest("Request body must be valid JSON.", "INVALID_REQUEST");
-    }
+    const body = await readRequestObject(request);
 
     const result = await runQuickBrief(body);
     return NextResponse.json(result);

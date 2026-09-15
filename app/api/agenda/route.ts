@@ -1,11 +1,12 @@
 import { NextResponse } from "next/server";
+import { readRequestObject } from "@/lib/request";
 import {
   createDiscussionTopics,
   normalizePanelMode,
   validateIdea
 } from "@/lib/debate";
 import { createRunObserver } from "@/lib/observability";
-import { invalidRequest, toPublicError } from "@/lib/errors";
+import { toPublicError } from "@/lib/errors";
 import { assertLiveExecutionEnabled } from "@/lib/v2/validation";
 
 export async function POST(request: Request) {
@@ -13,15 +14,8 @@ export async function POST(request: Request) {
 
   try {
     assertLiveExecutionEnabled();
-    let body: {
-      idea?: unknown;
-      panelMode?: unknown;
-    };
-    try {
-      body = (await request.json()) as typeof body;
-    } catch {
-      throw invalidRequest("Request body must be valid JSON.", "INVALID_REQUEST");
-    }
+    const body = await readRequestObject(request);
+
     const idea = validateIdea(body.idea);
     const panelMode = normalizePanelMode(body.panelMode);
     const topics = await createDiscussionTopics(idea, panelMode, observer);

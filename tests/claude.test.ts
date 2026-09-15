@@ -63,6 +63,30 @@ describe("Anthropic client observability", () => {
     expect(JSON.stringify(metrics)).not.toContain("private system prompt");
   });
 
+  it.each([
+    null,
+    { content: {} },
+    { content: [null] },
+    { content: [{ type: "text", text: 42 }] }
+  ])("classifies malformed provider JSON as a recorded model-response failure: %j", async (body) => {
+    vi.stubEnv("ANTHROPIC_API_KEY", "test-key");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(body))));
+    const metrics: ModelCallMetric[] = [];
+    await expect(callClaude([{ role: "user", content: "idea" }], "system", {
+      observer: collectingObserver(metrics), maxRetries: 0
+    })).rejects.toMatchObject({ code: "INVALID_MODEL_RESPONSE", status: 502 });
+    expect(metrics).toHaveLength(1);
+    expect(metrics[0]).toMatchObject({ status: "error", errorCategory: "invalid_model_response" });
+  });
+
+  it("preserves rate-limit classification when the provider body is null", async () => {
+    vi.stubEnv("ANTHROPIC_API_KEY", "test-key");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("null", { status: 429 })));
+    await expect(callClaude([], "system", { maxRetries: 0 })).rejects.toMatchObject({
+      code: "UPSTREAM_RATE_LIMIT", status: 429, retryable: true
+    });
+  });
+
   it("classifies a final rate limit without storing request content", async () => {
     vi.stubEnv("ANTHROPIC_API_KEY", "test-key");
     vi.stubGlobal(
