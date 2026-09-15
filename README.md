@@ -60,6 +60,10 @@ flowchart TD
 
 The 8,400 limit sums **requested output ceilings**, including retries; it is not a cap on input tokens, total billable tokens, or dollars. Actual reported input/output usage appears in diagnostics. The four-attempt budget is an upper bound, not a promise that every failure path uses all remaining attempts.
 
+The fallback frame summarizes a goal to the frame's 500-character limit; the writer
+still receives the original accepted goal. This keeps the fallback response within
+the same contract the browser uses for model-produced frames.
+
 ## What a Quick Brief contains
 
 - Idea summary; a calibrated verdict and rationale.
@@ -113,6 +117,10 @@ npm start
 ## API and error handling
 
 All three routes use the Node.js runtime and return JSON rather than streamed tokens.
+Request bodies must be JSON objects; `null`, arrays, and scalar values return
+`400 INVALID_REQUEST` before any model work. Provider JSON is checked separately:
+malformed successful responses become recorded `502 INVALID_MODEL_RESPONSE` errors,
+while non-success HTTP statuses retain their rate-limit or service-error classification.
 
 | Endpoint | Request | Result |
 | --- | --- | --- |
@@ -204,6 +212,7 @@ Possible extensions include controlled source retrieval, more discriminating/bli
 | [`lib/v2/quick-brief.ts`](lib/v2/quick-brief.ts), [`planner.ts`](lib/v2/planner.ts), [`budget.ts`](lib/v2/budget.ts) | Bounded orchestration, fallback, routing signals |
 | [`lib/v2/contract-schema.ts`](lib/v2/contract-schema.ts), [`lib/api-client.ts`](lib/api-client.ts) | Shared runtime parsers and browser response/error handling |
 | [`lib/claude.ts`](lib/claude.ts) | Provider transport, timeout, retries, typed errors |
+| [`lib/request.ts`](lib/request.ts) | Shared JSON-object validation at the three HTTP routes |
 | [`lib/debate.ts`](lib/debate.ts), [`lib/history.ts`](lib/history.ts) | Fixed legacy orchestration and local history |
 | [`evals`](evals), [`tests`](tests) | Evaluation harnesses, committed evidence, offline and browser checks |
 | [`docs`](docs) | Decisions and failure investigations |

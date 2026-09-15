@@ -98,13 +98,47 @@ function retryDelayMs(
   return Math.min(exponential + jitter, MAX_RETRY_DELAY_MS);
 }
 
+function responseObject(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+function parseResponse(value: unknown): AnthropicResponse {
+  const body = responseObject(value);
+  if (!body) return {};
+  const metadata = (value: unknown) =>
+    typeof value === "string" ? value.slice(0, 200) : undefined;
+  const tokens = (value: unknown) =>
+    typeof value === "number" && Number.isSafeInteger(value) && value >= 0
+      ? value : undefined;
+  const usage = responseObject(body.usage);
+  let content: AnthropicTextBlock[] | undefined;
+  if (Array.isArray(body.content)) {
+    const blocks = body.content.map(responseObject);
+    const valid = blocks.every(block => block && typeof block.type === "string" &&
+      (block.type !== "text" || typeof block.text === "string"));
+    if (valid) {
+      content = blocks.flatMap(block => block?.type === "text"
+        ? [{ type: "text" as const, text: block.text as string }] : []);
+    }
+  }
+  return {
+    model: metadata(body.model),
+    request_id: metadata(body.request_id),
+    stop_reason: metadata(body.stop_reason),
+    content,
+    usage: { input_tokens: tokens(usage?.input_tokens), output_tokens: tokens(usage?.output_tokens) }
+  };
+}
+
 /**
  * Parse the response body. A body that is not JSON reads as empty so the status code
  * decides the outcome, but a body cut off by the request deadline is a timeout.
  */
 async function readBody(response: Response, signal: AbortSignal): Promise<AnthropicResponse> {
   try {
-    return (await response.json()) as AnthropicResponse;
+    return parseResponse(await response.json());
   } catch (error) {
     if (signal.aborted) throw error;
     return {};
